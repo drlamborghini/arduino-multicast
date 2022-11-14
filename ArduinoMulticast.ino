@@ -1,17 +1,17 @@
 /*
-  Blink
-
-  Turns an LED on for one second, then off for one second, repeatedly.
-
-  Most Arduinos have an on-board LED you can control. On the UNO, MEGA and ZERO
-  it is attached to digital pin 13, on MKR1000 on pin 6. LED_BUILTIN is set to
-  the correct LED pin independent of which board is used.
-  If you want to know what pin the on-board LED is connected to on your Arduino
-  model, check the Technical Specs of your board at:
-  https://www.arduino.cc/en/Main/Products
-
-  https://www.arduino.cc/en/Tutorial/BuiltInExamples/Blink
-*/
+ * ArduinoMulticast
+ * 
+ * A project to read environmental sensors and system conditions 
+ * which then multicasts information as ASCII text
+ * 
+ * Intended for use with the SparkFun ESP32 Thing Plus C, SparkFun BME280 environmential sensor 
+ * connected over I2C (Qwicc).
+ * 
+ * Uses ESP32 ultra low power mode to extend battery life
+ *
+ * The first version also included an http server for testing
+ *  
+ */
 
 #include <WebServer.h>
 #include <Uri.h>
@@ -28,8 +28,15 @@
 #include <WiFiClient.h>
 #include <WiFi.h>
 
+/* 
+ * local wifi credentials here:
+ */
 const char* ssid = "ninemile";    // Enter SSID here
 const char* password = "southwest15"; // Enter Password here
+
+/*
+ * iteration counter for test 
+ */
 static int count = 0;
 
 /*
@@ -289,13 +296,11 @@ void go_to_sleep()
  */
 
 
-/* UDP
+/* 
+ * WiFi and UDP setup for ESP32 
  *  
  */
-/*
- *  This sketch sends random data over UDP on a ESP32 device
- *
- */
+
 #include <WiFi.h>
 #include <WiFiUdp.h>
 
@@ -409,7 +414,12 @@ void setup()
   setup_bme_sensor();
 }
 
-// the loop function runs over and over again forever
+/* 
+ * Use the on board LEDs as health indicators
+ * Setup the BME280 and Wifi connections
+ * Multicast the environment and system info
+ * Put the system to sleep to extend battery life
+ */
 void loop() 
 {
  
