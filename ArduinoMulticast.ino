@@ -1,17 +1,17 @@
-/*
- * ArduinoMulticast
- * 
- * A project to read environmental sensors and system conditions 
- * which then multicasts information as ASCII text
- * 
- * Intended for use with the SparkFun ESP32 Thing Plus C, SparkFun BME280 environmential sensor 
- * connected over I2C (Qwicc).
- * 
- * Uses ESP32 ultra low power mode to extend battery life
- *
- * The first version also included an http server for testing
- *  
- */
+// 
+// ArduinoMulticast
+// 
+// A project to read environmental sensors and system conditions 
+// which then multicasts information as ASCII text
+// 
+// Intended for use with the SparkFun ESP32 Thing Plus C, SparkFun BME280 environmential sensor 
+// connected over I2C (Qwicc).
+// 
+// Uses ESP32 ultra low power mode to extend battery life
+// 
+// The first version also included an http server for testing
+//  
+// 
 
 #include <WebServer.h>
 #include <Uri.h>
@@ -28,32 +28,31 @@
 #include <WiFiClient.h>
 #include <WiFi.h>
 
-/* 
- * local wifi credentials here:
- */
+// 
+// local wifi credentials here:
+//
 const char* ssid = "ninemile";    // Enter SSID here
 const char* password = "southwest15"; // Enter Password here
 
-/*
- * iteration counter for test 
- */
+//
+// iteration counter for test 
+// 
 static int count = 0;
 
-/*
-  Adjust the local Reference Pressure
-  Nathan Seidle @ SparkFun Electronics
-  March 23, 2018
-  Feel like supporting our work? Buy a board from SparkFun!
-  https://www.sparkfun.com/products/14348 - Qwiic Combo Board
-  https://www.sparkfun.com/products/13676 - BME280 Breakout Board
-  'Sea level' pressure changes with high and low pressure weather movement. 
-  This sketch demonstrates how to change sea level 101325Pa to a different value.
-  See Issue 1: https://github.com/sparkfun/SparkFun_BME280_Arduino_Library/issues/1
-  Google 'sea level pressure map' for more information:
-  http://weather.unisys.com/surface/sfc_con.php?image=pr&inv=0&t=cur
-  https://www.atmos.illinois.edu/weather/tree/viewer.pl?launch/sfcslp
-  29.92 inHg = 1.0 atm = 101325 Pa = 1013.25 mb
-*/
+// Adjust the local Reference Pressure
+// Nathan Seidle @ SparkFun Electronics
+// March 23, 2018
+// Feel like supporting our work? Buy a board from SparkFun!
+// https://www.sparkfun.com/products/14348 - Qwiic Combo Board
+// https://www.sparkfun.com/products/13676 - BME280 Breakout Board
+// 'Sea level' pressure changes with high and low pressure weather movement. 
+// This sketch demonstrates how to change sea level 101325Pa to a different value.
+// See Issue 1: https://github.com/sparkfun/SparkFun_BME280_Arduino_Library/issues/1
+// Google 'sea level pressure map' for more information:
+// http://weather.unisys.com/surface/sfc_con.php?image=pr&inv=0&t=cur
+// https://www.atmos.illinois.edu/weather/tree/viewer.pl?launch/sfcslp
+// 29.92 inHg = 1.0 atm = 101325 Pa = 1013.25 mb
+
 
 #include <Wire.h>
 #include "SparkFunBME280.h"
@@ -69,6 +68,7 @@ int setup_bme_sensor()
 
   Wire.begin();
   Wire.setClock(400000); //Increase to fast I2C speed!
+
   // Set up the MAX17048 LiPo fuel gauge:
   if (lipo.begin() == false) // Connect to the MAX17048 using the default wire port
   {
@@ -199,107 +199,96 @@ String SendHTML()
 }
 #endif
 
-/*
- * Begin section
- * timer wakeup configuration
- */
+//
+// timer wakeup configuration
+//
 
-/*
-Simple Deep Sleep with Timer Wake Up
-=====================================
-ESP32 offers a deep sleep mode for effective power
-saving as power is an important factor for IoT
-applications. In this mode CPUs, most of the RAM,
-and all the digital peripherals which are clocked
-from APB_CLK are powered off. The only parts of
-the chip which can still be powered on are:
-RTC controller, RTC peripherals ,and RTC memories
 
-This code displays the most basic deep sleep with
-a timer to wake it up and how to store data in
-RTC memory to use it over reboots
-*/
+// Simple Deep Sleep with Timer Wake Up
+// =====================================
+// ESP32 offers a deep sleep mode for effective power
+// saving as power is an important factor for IoT
+// applications. In this mode CPUs, most of the RAM,
+// and all the digital peripherals which are clocked
+// from APB_CLK are powered off. The only parts of
+// the chip which can still be powered on are:
+// RTC controller, RTC peripherals ,and RTC memories
 
-#define uS_TO_S_FACTOR 1000000ULL  /* Conversion factor for micro seconds to seconds */
-#define TIME_TO_SLEEP  5        /* Time ESP32 will go to sleep (in seconds) */
+// This code displays the most basic deep sleep with
+// a timer to wake it up and how to store data in
+// RTC memory to use it over reboots
+
+
+#define uS_TO_S_FACTOR 1000000ULL   // Conversion factor for micro seconds to seconds 
+#define TIME_TO_SLEEP  5            // Time ESP32 will go to sleep (in seconds) */
 
 RTC_DATA_ATTR int bootCount = 0;
 
-/*
-Method to print the reason by which ESP32
-has been awaken from sleep
-*/
-void print_wakeup_reason(){
-  esp_sleep_wakeup_cause_t wakeup_reason;
 
-  wakeup_reason = esp_sleep_get_wakeup_cause();
+// Method to print the reason by which ESP32
+// has been awaken from sleep
+void print_wakeup_reason()
+{
+    esp_sleep_wakeup_cause_t wakeup_reason;
 
-  switch(wakeup_reason)
-  {
-    case ESP_SLEEP_WAKEUP_EXT0 : Serial.println("Wakeup caused by external signal using RTC_IO"); break;
-    case ESP_SLEEP_WAKEUP_EXT1 : Serial.println("Wakeup caused by external signal using RTC_CNTL"); break;
-    case ESP_SLEEP_WAKEUP_TIMER : Serial.println("Wakeup caused by timer"); break;
-    case ESP_SLEEP_WAKEUP_TOUCHPAD : Serial.println("Wakeup caused by touchpad"); break;
-    case ESP_SLEEP_WAKEUP_ULP : Serial.println("Wakeup caused by ULP program"); break;
-    default : Serial.printf("Wakeup was not caused by deep sleep: %d\n",wakeup_reason); break;
-  }
+    wakeup_reason = esp_sleep_get_wakeup_cause();
+
+    switch(wakeup_reason)
+    {
+      case ESP_SLEEP_WAKEUP_EXT0 : Serial.println("Wakeup caused by external signal using RTC_IO"); break;
+      case ESP_SLEEP_WAKEUP_EXT1 : Serial.println("Wakeup caused by external signal using RTC_CNTL"); break;
+      case ESP_SLEEP_WAKEUP_TIMER : Serial.println("Wakeup caused by timer"); break;
+      case ESP_SLEEP_WAKEUP_TOUCHPAD : Serial.println("Wakeup caused by touchpad"); break;
+      case ESP_SLEEP_WAKEUP_ULP : Serial.println("Wakeup caused by ULP program"); break;
+      default : Serial.printf("Wakeup was not caused by deep sleep: %d\n",wakeup_reason); break;
+    }
 }
 
 void wakeup_timer_setup()
 {
-  //Increment boot number and print it every reboot
-  ++bootCount;
-  Serial.println("Boot number: " + String(bootCount));
+    //Increment boot number and print it every reboot
+    ++bootCount;
+    Serial.println("Boot number: " + String(bootCount));
 
-  //Print the wakeup reason for ESP32
-  print_wakeup_reason();
+    //Print the wakeup reason for ESP32
+    print_wakeup_reason();
 
-  /*
-  First we configure the wake up source
-  We set our ESP32 to wake up every 5 seconds
-  */
-  esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
-  Serial.println("Setup ESP32 to sleep for every " + String(TIME_TO_SLEEP) + " Seconds");
+    //  First we configure the wake up source
+    //  We set our ESP32 to wake up every 5 seconds
 
-  /*
-  Next we decide what all peripherals to shut down/keep on
-  By default, ESP32 will automatically power down the peripherals
-  not needed by the wakeup source, but if you want to be a poweruser
-  this is for you. Read in detail at the API docs
-  http://esp-idf.readthedocs.io/en/latest/api-reference/system/deep_sleep.html
-  Left the line commented as an example of how to configure peripherals.
-  The line below turns off all RTC peripherals in deep sleep.
-  */
-  //esp_deep_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_OFF);
-  //Serial.println("Configured all RTC Peripherals to be powered down in sleep");
+    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
+    Serial.println("Setup ESP32 to sleep for every " + String(TIME_TO_SLEEP) + " Seconds");
 
+    // Next we decide what all peripherals to shut down/keep on
+    // By default, ESP32 will automatically power down the peripherals
+    // not needed by the wakeup source, but if you want to be a poweruser
+    // this is for you. Read in detail at the API docs
+    // http://esp-idf.readthedocs.io/en/latest/api-reference/system/deep_sleep.html
+    // Left the line commented as an example of how to configure peripherals.
+    // The line below turns off all RTC peripherals in deep sleep.
+
+    //esp_deep_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_OFF);
+    //Serial.println("Configured all RTC Peripherals to be powered down in sleep");
 }
 
 void go_to_sleep()
 {
-  /*
-  Now that we have setup a wake cause and if needed setup the
-  peripherals state in deep sleep, we can now start going to
-  deep sleep.
-  In the case that no wake up sources were provided but deep
-  sleep was started, it will sleep forever unless hardware
-  reset occurs.
-  */
-  Serial.println("Going to sleep now");
-  Serial.flush(); 
-  esp_deep_sleep_start();
+    // Now that we have setup a wake cause and if needed setup the
+    // peripherals state in deep sleep, we can now start going to
+    // deep sleep.
+    // In the case that no wake up sources were provided but deep
+    // sleep was started, it will sleep forever unless hardware
+    // reset occurs.
+
+    Serial.println("Going to sleep now");
+    Serial.flush(); 
+    esp_deep_sleep_start();
 }
 
-/*
- *  End Section
- *  timer wakeup configuration
- */
 
-
-/* 
- * WiFi and UDP setup for ESP32 
- *  
- */
+//
+// WiFi and UDP setup for ESP32 
+//
 
 #include <WiFi.h>
 #include <WiFiUdp.h>
@@ -386,40 +375,37 @@ void send_UDP()
   delay(1000);
 }
 
-/* END UDP */
-
-////////////////////////////////////////////////////////////////////////////////
+//
 // setup and loop
-////////////////////////////////////////////////////////////////////////////////
-
-// the setup function runs once when you press reset or power the board
+//
 void setup() 
 {
-  // initialize digital pin LED_BUILTIN as an output.
-  pinMode(LED_BUILTIN, OUTPUT);
-//  pinMode(5, OUTPUT);      // set the LED pin mode
+    // initialize digital pin LED_BUILTIN as an output.
+    pinMode(LED_BUILTIN, OUTPUT);
 
-  Serial.begin(115200);
-  delay(100);
-  Serial.println("Connecting to ");
-  Serial.println(ssid);
+    // Set the terminal baud rate
+    Serial.begin(115200);
+    delay(100);
+    Serial.println("Connecting to ");
+    Serial.println(ssid);
 
-  setup_UDP();
-  
-  Serial.println("");
-  Serial.println("WiFi connected..!");
-  Serial.print("Got IP: ");
-  Serial.println(WiFi.localIP());
+    // Setup the Wifi and UDP interfaces
+    setup_UDP();
 
-  setup_bme_sensor();
+    Serial.println("");
+    Serial.println("WiFi connected..!");
+    Serial.print("Got IP: ");
+    Serial.println(WiFi.localIP());
+
+    // ready the BME280
+    setup_bme_sensor();
 }
 
-/* 
- * Use the on board LEDs as health indicators
- * Setup the BME280 and Wifi connections
- * Multicast the environment and system info
- * Put the system to sleep to extend battery life
- */
+ 
+// Use the on board LEDs as health indicators
+// Setup the BME280 and Wifi connections
+// Multicast the environment and system info
+// Put the system to sleep to extend battery life
 void loop() 
 {
  
