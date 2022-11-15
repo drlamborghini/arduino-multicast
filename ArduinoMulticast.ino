@@ -4,14 +4,13 @@
 // A project to read environmental sensors and system conditions 
 // which then multicasts information as ASCII text
 // 
-// Intended for use with the SparkFun ESP32 Thing Plus C, SparkFun BME280 environmential sensor 
+// Intended for use with the SparkFun ESP32 Thing Plus C and the SparkFun BME280 environmential sensor 
 // connected over I2C (Qwicc).
 // 
-// Uses ESP32 ultra low power mode to extend battery life
+// Also uses ESP32 ultra low power mode to extend battery life
 // 
-// The first version also included an http server for testing
+// The first version included an http server for testing
 //  
-// 
 
 #include <WebServer.h>
 #include <Uri.h>
@@ -344,39 +343,27 @@ void WiFiEvent(WiFiEvent_t event){
     }
 }
 
-void setup_UDP()
-{
-  // Initilize hardware serial:
-//  Serial.begin(115200);
-  
-  //Connect to the WiFi network
-  connectToWiFi(networkName, networkPswd);
-}
-
-
+//
+// form and send a packet
+//
 void send_UDP()
 {
-  //only send data when connected
-//  if(connected)
-  {
-    //Send a packet
-    udp.beginPacket(udpAddress,udpPort);
-    udp.printf("Seconds since boot: %lu\n", millis()/1000);
-    printf("UDP sending Seconds since boot: %d\n", (int)(millis()/1000) );
-    udp.printf("Temperature: %1.2f deg F\n", mySensor.readTempF());
-    udp.printf("Pressure: %1.2f inHg\n", mySensor.readFloatPressure() / 3386.39);
-    udp.printf("Humidity: %1.2f\n", mySensor.readFloatHumidity());
-    udp.printf("Voltage: %1.2f Vdc\n", lipo.getVoltage());
-    udp.printf("Charge: %1.2f percent\n", lipo.getSOC());
-    udp.endPacket();
-  }
-
-  //Wait for 1 second
-  delay(1000);
+    if(connected)
+    {
+        udp.beginPacket(udpAddress,udpPort);
+        udp.printf("Seconds since boot: %lu\n", millis()/1000);
+        printf("UDP sending Seconds since boot: %d\n", (int)(millis()/1000) );
+        udp.printf("Temperature: %1.2f deg F\n", mySensor.readTempF());
+        udp.printf("Pressure: %1.2f inHg\n", mySensor.readFloatPressure() / 3386.39);
+        udp.printf("Humidity: %1.2f\n", mySensor.readFloatHumidity());
+        udp.printf("Voltage: %1.2f Vdc\n", lipo.getVoltage());
+        udp.printf("Charge: %1.2f percent\n", lipo.getSOC());
+        udp.endPacket();
+    }
 }
 
 //
-// setup and loop
+// Setup the BME280 and Wifi connections
 //
 void setup() 
 {
@@ -386,11 +373,11 @@ void setup()
     // Set the terminal baud rate
     Serial.begin(115200);
     delay(100);
+
+    //Connect to the WiFi network
+    connectToWiFi(networkName, networkPswd);
     Serial.println("Connecting to ");
     Serial.println(ssid);
-
-    // Setup the Wifi and UDP interfaces
-    setup_UDP();
 
     Serial.println("");
     Serial.println("WiFi connected..!");
@@ -401,18 +388,18 @@ void setup()
     setup_bme_sensor();
 }
 
- 
+//  
 // Use the on board LEDs as health indicators
-// Setup the BME280 and Wifi connections
 // Multicast the environment and system info
 // Put the system to sleep to extend battery life
+//
 void loop() 
 {
- 
+  // blink the LED as a health indicator
   digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
-  delay(1000);                       // wait for a second
+  delay(250);                       // wait for a second
   digitalWrite(LED_BUILTIN, LOW);    // turn the LED off by making the voltage LOW
-  delay(1000);                       // wait for a second
+  delay(250);                       // wait for a second
   digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
   delay(250);                       // wait for a second
   digitalWrite(LED_BUILTIN, LOW);    // turn the LED off by making the voltage LOW
@@ -422,11 +409,12 @@ void loop()
   digitalWrite(LED_BUILTIN, LOW);    // turn the LED off by making the voltage LOW
 
   fprintf(stderr, "count = %d\n", count++);
-  delay(1000);                       // wait for a second
 
   printf("BME Sensor Ready\n");
   print_sensor_data();
   print_battery_data();
+
+  delay(1000);                       // wait for a second
 
   send_UDP();
   
