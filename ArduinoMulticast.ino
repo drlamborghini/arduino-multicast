@@ -33,11 +33,6 @@
 const char* ssid = "ninemile";    // Enter SSID here
 const char* password = "southwest15"; // Enter Password here
 
-//
-// iteration counter for test 
-// 
-static int count = 0;
-
 // Adjust the local Reference Pressure
 // Nathan Seidle @ SparkFun Electronics
 // March 23, 2018
@@ -395,28 +390,33 @@ void setup()
 //
 void loop() 
 {
+
+#if 1
   // blink the LED as a health indicator
   digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
-  delay(250);                       // wait for a second
+  delay(3000);                       
   digitalWrite(LED_BUILTIN, LOW);    // turn the LED off by making the voltage LOW
-  delay(250);                       // wait for a second
+#else
+  // blink the LED as a health indicator
   digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
-  delay(250);                       // wait for a second
+  delay(100);
   digitalWrite(LED_BUILTIN, LOW);    // turn the LED off by making the voltage LOW
-  delay(250);                       // wait for a second
-  digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
-  delay(250);                       // wait for a second
-  digitalWrite(LED_BUILTIN, LOW);    // turn the LED off by making the voltage LOW
+  delay(100);
+  digitalWrite(LED_BUILTIN, HIGH);
+  delay(100);
+  digitalWrite(LED_BUILTIN, LOW);
+  delay(100);
+  digitalWrite(LED_BUILTIN, HIGH);
+  delay(100);
+  digitalWrite(LED_BUILTIN, LOW);
+#endif
 
-  fprintf(stderr, "count = %d\n", count++);
-
-  printf("BME Sensor Ready\n");
   print_sensor_data();
   print_battery_data();
 
-  delay(1000);                       // wait for a second
-
   send_UDP();
+
+  delay(1000);                       // wait for a second
   
 //  go_to_sleep();
 }
