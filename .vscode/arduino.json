@@ -1,7 +1,0 @@
-{
-    "configuration": "FlashFreq=80,PartitionScheme=default,UploadSpeed=115200,DebugLevel=none,EraseFlash=none",
-    "board": "espressif:esp32:esp32thing_plus_c",
-    "programmer": "espressif:esptool",
-    "port": "/dev/ttyUSB0",
-    "sketch": "ArduinoMulticast.ino"
-}
