@@ -33,24 +33,16 @@
 const char* ssid = "ninemile";    // Enter SSID here
 const char* password = "southwest15"; // Enter Password here
 
-//
-// iteration counter for test 
-// 
-static int count = 0;
-
 // Adjust the local Reference Pressure
+
 // Nathan Seidle @ SparkFun Electronics
 // March 23, 2018
 // Feel like supporting our work? Buy a board from SparkFun!
 // https://www.sparkfun.com/products/14348 - Qwiic Combo Board
 // https://www.sparkfun.com/products/13676 - BME280 Breakout Board
+
 // 'Sea level' pressure changes with high and low pressure weather movement. 
-// This sketch demonstrates how to change sea level 101325Pa to a different value.
-// See Issue 1: https://github.com/sparkfun/SparkFun_BME280_Arduino_Library/issues/1
-// Google 'sea level pressure map' for more information:
-// http://weather.unisys.com/surface/sfc_con.php?image=pr&inv=0&t=cur
-// https://www.atmos.illinois.edu/weather/tree/viewer.pl?launch/sfcslp
-// 29.92 inHg = 1.0 atm = 101325 Pa = 1013.25 mb
+// 1 atmosphere = 29.92 inHg
 
 
 #include <Wire.h>
@@ -58,76 +50,79 @@ static int count = 0;
 #include <SparkFun_MAX1704x_Fuel_Gauge_Arduino_Library.h> 
 
 SFE_MAX1704X lipo(MAX1704X_MAX17048); // Allow access to all the 17048 features
-BME280 mySensor;
+BME280 bme280Sensor;
+int SeaLevelPressure = 101200;
 
 int setup_bme_sensor()
 {
-  Serial.begin(115200);
-  Serial.println("Example showing alternate I2C addresses");
+    Serial.begin(115200);
+    Serial.println("Example showing alternate I2C addresses");
 
-  Wire.begin();
-  Wire.setClock(400000); //Increase to fast I2C speed!
+    Wire.begin();
+    Wire.setClock(400000); //Increase to fast I2C speed!
 
-  // Set up the MAX17048 LiPo fuel gauge:
-  if (lipo.begin() == false) // Connect to the MAX17048 using the default wire port
-  {
-    Serial.println(F("MAX17048 not detected. Please check wiring. Freezing."));
-  }
+    // Set up the MAX17048 LiPo fuel gauge:
+    if (lipo.begin() == false) // Connect to the MAX17048 using the default wire port
+    {
+      Serial.println(F("MAX17048 not detected. Please check wiring. Freezing."));
+    }
 
-  if (mySensor.beginI2C() == false)    //Begin communication over I2C
-  {
-      Serial.println("The sensor did not respond. Please check wiring.");
-      return -1;
-//      while (1); //Freeze
-  }
+    if (bme280Sensor.beginI2C() == false)    //Begin communication over I2C
+    {
+        Serial.println("The sensor did not respond. Please check wiring.");
+        return -1;
+    }
 
-  mySensor.setReferencePressure(101200); //Adjust the sea level pressure used for altitude calculations
-
-  return 0;
+    //Adjust the sea level pressure used for altitude calculations
+    bme280Sensor.setReferencePressure(SeaLevelPressure); 
+    
+    return 0;
 }
 
 void print_battery_data()
 {
-  // Print the variables:
-  Serial.print("Voltage: ");
-  Serial.print(lipo.getVoltage(), 2);  // Print the battery voltage
-  Serial.print("V");
+    // Print the variables:
+    Serial.print("Voltage: ");
+    Serial.print(lipo.getVoltage(), 2);  // Print the battery voltage
+    Serial.print("V");
 
-  Serial.print(" Percentage: ");
-  Serial.print(lipo.getSOC(), 2); // Print the battery state of charge with 2 decimal places
-  Serial.print("%");
+    Serial.print(" Percentage: ");
+    Serial.print(lipo.getSOC(), 2); // Print the battery state of charge with 2 decimal places
+    Serial.print("%");
 
-  Serial.print(" Change Rate: ");
-  Serial.print(lipo.getChangeRate(), 2); // Print the battery change rate with 2 decimal places
-  Serial.print("%/hr");
+    Serial.print(" Change Rate: ");
+    Serial.print(lipo.getChangeRate(), 2); // Print the battery change rate with 2 decimal places
+    Serial.print("%/hr");
 
-  Serial.println();
+    Serial.println();
 }
+
+
+#define pascalsPerInHg  3386.39;
 
 void print_sensor_data()
 {
-  Serial.print("Humidity: ");
-  Serial.print(mySensor.readFloatHumidity(), 0);
+    Serial.print("Humidity: ");
+    Serial.print(bme280Sensor.readFloatHumidity(), 0);
 
-  Serial.print(" Pressure: ");
+    Serial.print(" Pressure: ");
 
-  float pressure = mySensor.readFloatPressure() / 3386.39; 
-//  printf("pressure %1.2f", pressure);
-  Serial.print(pressure, 2);
+    float pressure = bme280Sensor.readFloatPressure() / pascalsPerInHg; 
+    Serial.print(pressure, 2);
 
 #if 0
   Serial.print(" Locally Adjusted Altitude: ");
-  //Serial.print(mySensor.readFloatAltitudeMeters(), 1);
-  Serial.print(mySensor.readFloatAltitudeFeet(), 1);
+  //Serial.print(bme280Sensor.readFloatAltitudeMeters(), 1);
+  Serial.print(bme280Sensor.readFloatAltitudeFeet(), 1);
 #endif
 
-  Serial.print(" Temp: ");
-  //Serial.print(mySensor.readTempC(), 2);
-  Serial.print(mySensor.readTempF(), 2);
+    Serial.print(" Temp: ");
+    //Serial.print(bme280Sensor.readTempC(), 2);
+    Serial.print(bme280Sensor.readTempF(), 2);
 
-  Serial.println();
+    Serial.println();
 
-  delay(50);
+    delay(50);
 }
 
 #if 0
@@ -156,21 +151,21 @@ String SendHTML()
 
 
     String temperatureString = "";
-    temperatureString =+ mySensor.readTempF();
+    temperatureString =+ bme280Sensor.readTempF();
     ptr += "<h1>Conditions: \n";
     ptr += temperatureString;
     ptr += " deg F, ";
 //    ptr += "</h1>\n";
 
     String pressureString = "";
-    pressureString =+ mySensor.readFloatPressure() / 3386.39;
+    pressureString =+ bme280Sensor.readFloatPressure() / 3386.39;
 //    ptr += "<h1>pressure = \n";
     ptr += pressureString;
     ptr += " inHg, ";
  //   ptr += "</h1>\n";
 
     String humidityString = "";
-    humidityString =+ mySensor.readFloatHumidity();
+    humidityString =+ bme280Sensor.readFloatHumidity();
 //    ptr += "<h1>humidity = \n";
     ptr += humidityString;
     ptr += " % humidity";
@@ -222,7 +217,6 @@ String SendHTML()
 #define TIME_TO_SLEEP  5            // Time ESP32 will go to sleep (in seconds) */
 
 RTC_DATA_ATTR int bootCount = 0;
-
 
 // Method to print the reason by which ESP32
 // has been awaken from sleep
@@ -308,7 +302,6 @@ boolean connected = false;
 //The udp library class
 WiFiUDP udp;
 
-
 void connectToWiFi(const char * ssid, const char * pwd){
   Serial.println("Connecting to WiFi network: " + String(ssid));
 
@@ -353,9 +346,9 @@ void send_UDP()
         udp.beginPacket(udpAddress,udpPort);
         udp.printf("Seconds since boot: %lu\n", millis()/1000);
         printf("UDP sending Seconds since boot: %d\n", (int)(millis()/1000) );
-        udp.printf("Temperature: %1.2f deg F\n", mySensor.readTempF());
-        udp.printf("Pressure: %1.2f inHg\n", mySensor.readFloatPressure() / 3386.39);
-        udp.printf("Humidity: %1.2f\n", mySensor.readFloatHumidity());
+        udp.printf("Temperature: %1.2f deg F\n", bme280Sensor.readTempF());
+        udp.printf("Pressure: %1.2f inHg\n", bme280Sensor.readFloatPressure() / 3386.39);
+        udp.printf("Humidity: %1.2f\n", bme280Sensor.readFloatHumidity());
         udp.printf("Voltage: %1.2f Vdc\n", lipo.getVoltage());
         udp.printf("Charge: %1.2f percent\n", lipo.getSOC());
         udp.endPacket();
@@ -395,28 +388,31 @@ void setup()
 //
 void loop() 
 {
-  // blink the LED as a health indicator
-  digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
-  delay(250);                       // wait for a second
-  digitalWrite(LED_BUILTIN, LOW);    // turn the LED off by making the voltage LOW
-  delay(250);                       // wait for a second
-  digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
-  delay(250);                       // wait for a second
-  digitalWrite(LED_BUILTIN, LOW);    // turn the LED off by making the voltage LOW
-  delay(250);                       // wait for a second
-  digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
-  delay(250);                       // wait for a second
-  digitalWrite(LED_BUILTIN, LOW);    // turn the LED off by making the voltage LOW
+    print_sensor_data();
+    print_battery_data();
+    send_UDP();
+    
+    // blink the LED as a health indicator
+    digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
 
-  fprintf(stderr, "count = %d\n", count++);
+#if 1
+    delay(3000);
+#else
+    delay(100);
+    digitalWrite(LED_BUILTIN, LOW);    // turn the LED off by making the voltage LOW
+    delay(100);
+    digitalWrite(LED_BUILTIN, HIGH);
+    delay(100);
+    digitalWrite(LED_BUILTIN, LOW); 
+    delay(100);
+    digitalWrite(LED_BUILTIN, HIGH);
+    delay(100);                       
+#endif    
+    digitalWrite(LED_BUILTIN, LOW);   
 
-  printf("BME Sensor Ready\n");
-  print_sensor_data();
-  print_battery_data();
+//    fprintf(stderr, "count = %d\n", count++);
 
-  delay(1000);                       // wait for a second
+    delay(500);
 
-  send_UDP();
-  
-//  go_to_sleep();
+//    go_to_sleep();
 }
