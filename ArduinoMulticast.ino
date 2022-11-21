@@ -214,7 +214,7 @@ String SendHTML()
 
 
 #define uS_TO_S_FACTOR 1000000ULL   // Conversion factor for micro seconds to seconds 
-#define TIME_TO_SLEEP  5            // Time ESP32 will go to sleep (in seconds) */
+#define TIME_TO_SLEEP  10            // Time ESP32 will go to sleep (in seconds) */
 
 RTC_DATA_ATTR int bootCount = 0;
 
@@ -274,9 +274,17 @@ void go_to_sleep()
     // sleep was started, it will sleep forever unless hardware
     // reset occurs.
 
+    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
+    Serial.println("Setup ESP32 to sleep for every " + String(TIME_TO_SLEEP) + " Seconds");
+
     Serial.println("Going to sleep now");
     Serial.flush(); 
+
+#if 0
     esp_deep_sleep_start();
+#else
+    esp_light_sleep_start();
+#endif
 }
 
 
@@ -353,6 +361,7 @@ void send_UDP()
         udp.printf("Humidity: %1.2f\n", mySensor.readFloatHumidity());
         udp.printf("Voltage: %1.2f Vdc\n", lipo.getVoltage());
         udp.printf("Charge: %1.2f percent\n", lipo.getSOC());
+        udp.printf("Rate: %1.2f percent/hour\n", lipo.getChangeRate());
         udp.endPacket();
     }
 }
@@ -394,8 +403,8 @@ void loop()
 #if 1
   // blink the LED as a health indicator
   digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
-  delay(3000);                       
-  digitalWrite(LED_BUILTIN, LOW);    // turn the LED off by making the voltage LOW
+  //delay(3000);                       
+  //digitalWrite(LED_BUILTIN, LOW);    // turn the LED off by making the voltage LOW
 #else
   // blink the LED as a health indicator
   digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
@@ -418,5 +427,5 @@ void loop()
 
   delay(1000);                       // wait for a second
   
-//  go_to_sleep();
+  go_to_sleep();
 }
