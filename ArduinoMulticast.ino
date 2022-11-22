@@ -27,6 +27,11 @@
 #include <WiFiClient.h>
 #include <WiFi.h>
 
+// for sntp
+#include "time.h"
+#include "sntp.h"
+
+
 // 
 // local wifi credentials here:
 //
@@ -101,6 +106,7 @@ void print_battery_data()
 
 void print_sensor_data()
 {
+  Serial.print("--------------------------\n");
   Serial.print("Humidity: ");
   Serial.print(mySensor.readFloatHumidity(), 0);
 
@@ -351,11 +357,32 @@ void WiFiEvent(WiFiEvent_t event){
 //
 void send_UDP()
 {
+    struct tm timeinfo;
+    if(!getLocalTime(&timeinfo))
+    {
+      Serial.println("No time available (yet)");
+      return;
+    }
+  
+#if 0
+  struct tm
+{
+  int tm_sec;			/* Seconds.	[0-60] (1 leap second) */
+  int tm_min;			/* Minutes.	[0-59] */
+  int tm_hour;			/* Hours.	[0-23] */
+  int tm_mday;			/* Day.		[1-31] */
+  int tm_mon;			/* Month.	[0-11] */
+  int tm_year;			/* Year	- 1900.  */
+  int tm_wday;			/* Day of week.	[0-6] */
+  int tm_yday;			/* Days in year.[0-365]	*/
+  int tm_isdst;			/* DST.		[-1/0/1]*/
+#endif
+
     if(connected)
     {
         udp.beginPacket(udpAddress,udpPort);
+        udp.printf("Time: %d:%.2d:%.2d\n", timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
         udp.printf("Seconds since boot: %lu\n", millis()/1000);
-        printf("UDP sending Seconds since boot: %d\n", (int)(millis()/1000) );
         udp.printf("Temperature: %1.2f deg F\n", mySensor.readTempF());
         udp.printf("Pressure: %1.2f inHg\n", mySensor.readFloatPressure() / 3386.39);
         udp.printf("Humidity: %1.2f\n", mySensor.readFloatHumidity());
@@ -365,6 +392,36 @@ void send_UDP()
         udp.endPacket();
     }
 }
+
+//
+// sntp setup
+//
+
+const char* ntpServer1 = "pool.ntp.org";
+const char* ntpServer2 = "time.nist.gov";
+const long  gmtOffset_sec = (-5 * 3600);
+const int   daylightOffset_sec = 3600;
+
+const char* time_zone = "CET-1CEST,M3.5.0,M10.5.0/3";  // TimeZone rule for Europe/Rome including daylight adjustment rules (optional)
+
+void printLocalTime()
+{
+  struct tm timeinfo;
+  if(!getLocalTime(&timeinfo)){
+    Serial.println("No time available (yet)");
+    return;
+  }
+  Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
+}
+
+// Callback function (get's called when time adjusts via NTP)
+void timeavailable(struct timeval *t)
+{
+  Serial.println("Got time adjustment from NTP!");
+  printLocalTime();
+}
+
+
 
 //
 // Setup the BME280 and Wifi connections
@@ -377,6 +434,37 @@ void setup()
     // Set the terminal baud rate
     Serial.begin(115200);
     delay(100);
+
+#if 1
+  // set notification call-back function
+  sntp_set_time_sync_notification_cb( timeavailable );
+
+  /**
+   * NTP server address could be aquired via DHCP,
+   *
+   * NOTE: This call should be made BEFORE esp32 aquires IP address via DHCP,
+   * otherwise SNTP option 42 would be rejected by default.
+   * NOTE: configTime() function call if made AFTER DHCP-client run
+   * will OVERRIDE aquired NTP server address
+   */
+  sntp_servermode_dhcp(1);    // (optional)
+
+  /**
+   * This will set configured ntp servers and constant TimeZone/daylightOffset
+   * should be OK if your time zone does not need to adjust daylightOffset twice a year,
+   * in such a case time adjustment won't be handled automagicaly.
+   */
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer1, ntpServer2);
+
+  /**
+   * A more convenient approach to handle TimeZones with daylightOffset 
+   * would be to specify a environmnet variable with TimeZone definition including daylight adjustmnet rules.
+   * A list of rules for your zone could be obtained from https://github.com/esp8266/Arduino/blob/master/cores/esp8266/TZ.h
+   */
+  //configTzTime(time_zone, ntpServer1, ntpServer2);
+#endif // if 0
+
+
 
     //Connect to the WiFi network
     connectToWiFi(networkName, networkPswd);
@@ -422,6 +510,7 @@ void loop()
 
   print_sensor_data();
   print_battery_data();
+  printLocalTime();     // it will take some time to sync time :)
 
   send_UDP();
 
