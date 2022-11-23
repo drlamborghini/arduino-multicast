@@ -27,16 +27,78 @@
 #include <WiFiClient.h>
 #include <WiFi.h>
 
+// for BME280
+#include <Wire.h>
+#include "SparkFunBME280.h"
+#include <SparkFun_MAX1704x_Fuel_Gauge_Arduino_Library.h> 
+
 // for sntp
 #include "time.h"
 #include "sntp.h"
 
+//
+// global variables
+//
+
+//
+// WiFi and UDP setup for ESP32 
+//
+
+//#include <WiFi.h>
+//#include <WiFiUdp.h>
+
+// WiFi network name and password:
+const char * networkName = "ninemile";
+const char * networkPswd = "southwest15";
 
 // 
 // local wifi credentials here:
 //
 const char* ssid = "ninemile";    // Enter SSID here
 const char* password = "southwest15"; // Enter Password here
+
+
+//IP address to send UDP data to:
+// either use the ip address of the server or 
+// a network broadcast address
+const char * udpAddress = "10.0.0.255";
+const int udpPort = 3333;
+
+//Are we currently connected?
+boolean connected = false;
+
+//The udp library class
+WiFiUDP udp;
+
+//sntp
+struct tm g_timeInfo;
+
+// battery sensing
+SFE_MAX1704X lipo(MAX1704X_MAX17048); // Allow access to all the 17048 features
+
+// weather measurement
+BME280 mySensor;
+
+
+//
+// timer wakeup configuration
+//
+// Simple Deep Sleep with Timer Wake Up
+// =====================================
+// ESP32 offers a deep sleep mode for effective power
+// saving as power is an important factor for IoT
+// applications. In this mode CPUs, most of the RAM,
+// and all the digital peripherals which are clocked
+// from APB_CLK are powered off. The only parts of
+// the chip which can still be powered on are:
+// RTC controller, RTC peripherals ,and RTC memories
+
+// This code displays the most basic deep sleep with
+// a timer to wake it up and how to store data in
+// RTC memory to use it over reboots
+#define uS_TO_S_FACTOR 1000000ULL   // Conversion factor for micro seconds to seconds 
+#define TIME_TO_SLEEP  10            // Time ESP32 will go to sleep (in seconds) */
+RTC_DATA_ATTR int bootCount = 0;
 
 // Adjust the local Reference Pressure
 // Nathan Seidle @ SparkFun Electronics
@@ -51,14 +113,6 @@ const char* password = "southwest15"; // Enter Password here
 // http://weather.unisys.com/surface/sfc_con.php?image=pr&inv=0&t=cur
 // https://www.atmos.illinois.edu/weather/tree/viewer.pl?launch/sfcslp
 // 29.92 inHg = 1.0 atm = 101325 Pa = 1013.25 mb
-
-
-#include <Wire.h>
-#include "SparkFunBME280.h"
-#include <SparkFun_MAX1704x_Fuel_Gauge_Arduino_Library.h> 
-
-SFE_MAX1704X lipo(MAX1704X_MAX17048); // Allow access to all the 17048 features
-BME280 mySensor;
 
 int setup_bme_sensor()
 {
@@ -199,32 +253,6 @@ String SendHTML()
 }
 #endif
 
-//
-// timer wakeup configuration
-//
-
-
-// Simple Deep Sleep with Timer Wake Up
-// =====================================
-// ESP32 offers a deep sleep mode for effective power
-// saving as power is an important factor for IoT
-// applications. In this mode CPUs, most of the RAM,
-// and all the digital peripherals which are clocked
-// from APB_CLK are powered off. The only parts of
-// the chip which can still be powered on are:
-// RTC controller, RTC peripherals ,and RTC memories
-
-// This code displays the most basic deep sleep with
-// a timer to wake it up and how to store data in
-// RTC memory to use it over reboots
-
-
-#define uS_TO_S_FACTOR 1000000ULL   // Conversion factor for micro seconds to seconds 
-#define TIME_TO_SLEEP  10            // Time ESP32 will go to sleep (in seconds) */
-
-RTC_DATA_ATTR int bootCount = 0;
-
-
 // Method to print the reason by which ESP32
 // has been awaken from sleep
 void print_wakeup_reason()
@@ -293,51 +321,28 @@ void go_to_sleep()
 #endif
 }
 
+void connectToWiFi(const char * ssid, const char * pwd)
+{
+    Serial.println("Connecting to WiFi network: " + String(ssid));
 
-//
-// WiFi and UDP setup for ESP32 
-//
+    // delete old config
+    WiFi.disconnect(true);
+    //register event handler
+    WiFi.onEvent(WiFiEvent);
+    
+    //Initiate connection
+    WiFi.begin(ssid, pwd);
 
-#include <WiFi.h>
-#include <WiFiUdp.h>
-
-// WiFi network name and password:
-const char * networkName = "ninemile";
-const char * networkPswd = "southwest15";
-
-//IP address to send UDP data to:
-// either use the ip address of the server or 
-// a network broadcast address
-const char * udpAddress = "10.0.0.255";
-const int udpPort = 3333;
-
-//Are we currently connected?
-boolean connected = false;
-
-//The udp library class
-WiFiUDP udp;
-
-
-void connectToWiFi(const char * ssid, const char * pwd){
-  Serial.println("Connecting to WiFi network: " + String(ssid));
-
-  // delete old config
-  WiFi.disconnect(true);
-  //register event handler
-  WiFi.onEvent(WiFiEvent);
-  
-  //Initiate connection
-  WiFi.begin(ssid, pwd);
-
-  Serial.println("Waiting for WIFI connection...");
+    Serial.println("Waiting for WIFI connection...");
 }
 
 //wifi event handler
-void WiFiEvent(WiFiEvent_t event){
+void WiFiEvent(WiFiEvent_t event)
+{
     switch(event) {
       case ARDUINO_EVENT_WIFI_STA_GOT_IP:
           //When connected set 
-          Serial.print("WiFi connected! IP address: ");
+          Serial.print("\nWiFi connected! IP address: ");
           Serial.println(WiFi.localIP());  
           //initializes the UDP state
           //This initializes the transfer buffer
@@ -345,7 +350,7 @@ void WiFiEvent(WiFiEvent_t event){
           connected = true;
           break;
       case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
-          Serial.println("WiFi lost connection");
+          Serial.println("\nWiFi lost connection");
           connected = false;
           break;
       default: break;
@@ -357,31 +362,10 @@ void WiFiEvent(WiFiEvent_t event){
 //
 void send_UDP()
 {
-    struct tm timeinfo;
-    if(!getLocalTime(&timeinfo))
-    {
-      Serial.println("No time available (yet)");
-      return;
-    }
-  
-#if 0
-  struct tm
-{
-  int tm_sec;			/* Seconds.	[0-60] (1 leap second) */
-  int tm_min;			/* Minutes.	[0-59] */
-  int tm_hour;			/* Hours.	[0-23] */
-  int tm_mday;			/* Day.		[1-31] */
-  int tm_mon;			/* Month.	[0-11] */
-  int tm_year;			/* Year	- 1900.  */
-  int tm_wday;			/* Day of week.	[0-6] */
-  int tm_yday;			/* Days in year.[0-365]	*/
-  int tm_isdst;			/* DST.		[-1/0/1]*/
-#endif
-
     if(connected)
     {
         udp.beginPacket(udpAddress,udpPort);
-        udp.printf("Time: %d:%.2d:%.2d\n", timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+        udp.printf("Time: %d:%.2d:%.2d\n", g_timeInfo.tm_hour, g_timeInfo.tm_min, g_timeInfo.tm_sec);
         udp.printf("Seconds since boot: %lu\n", millis()/1000);
         udp.printf("Temperature: %1.2f deg F\n", mySensor.readTempF());
         udp.printf("Pressure: %1.2f inHg\n", mySensor.readFloatPressure() / 3386.39);
@@ -406,22 +390,15 @@ const char* time_zone = "CET-1CEST,M3.5.0,M10.5.0/3";  // TimeZone rule for Euro
 
 void printLocalTime()
 {
-  struct tm timeinfo;
-  if(!getLocalTime(&timeinfo)){
-    Serial.println("No time available (yet)");
-    return;
-  }
-  Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
+    Serial.println(&g_timeInfo, "%A, %B %d %Y %H:%M:%S");
 }
 
 // Callback function (get's called when time adjusts via NTP)
 void timeavailable(struct timeval *t)
 {
-  Serial.println("Got time adjustment from NTP!");
-  printLocalTime();
+    Serial.println("Got time adjustment from NTP!");
+    printLocalTime();
 }
-
-
 
 //
 // Setup the BME280 and Wifi connections
@@ -435,36 +412,32 @@ void setup()
     Serial.begin(115200);
     delay(100);
 
-#if 1
-  // set notification call-back function
-  sntp_set_time_sync_notification_cb( timeavailable );
+    // set notification call-back function
+    sntp_set_time_sync_notification_cb( timeavailable );
 
-  /**
-   * NTP server address could be aquired via DHCP,
-   *
-   * NOTE: This call should be made BEFORE esp32 aquires IP address via DHCP,
-   * otherwise SNTP option 42 would be rejected by default.
-   * NOTE: configTime() function call if made AFTER DHCP-client run
-   * will OVERRIDE aquired NTP server address
-   */
-  sntp_servermode_dhcp(1);    // (optional)
+    /**
+     * NTP server address could be aquired via DHCP,
+     *
+     * NOTE: This call should be made BEFORE esp32 aquires IP address via DHCP,
+     * otherwise SNTP option 42 would be rejected by default.
+     * NOTE: configTime() function call if made AFTER DHCP-client run
+     * will OVERRIDE aquired NTP server address
+     */
+    sntp_servermode_dhcp(1);    // (optional)
 
-  /**
-   * This will set configured ntp servers and constant TimeZone/daylightOffset
-   * should be OK if your time zone does not need to adjust daylightOffset twice a year,
-   * in such a case time adjustment won't be handled automagicaly.
-   */
-  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer1, ntpServer2);
+    /**
+     * This will set configured ntp servers and constant TimeZone/daylightOffset
+     * should be OK if your time zone does not need to adjust daylightOffset twice a year,
+     * in such a case time adjustment won't be handled automagicaly.
+     */
+    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer1, ntpServer2);
 
-  /**
-   * A more convenient approach to handle TimeZones with daylightOffset 
-   * would be to specify a environmnet variable with TimeZone definition including daylight adjustmnet rules.
-   * A list of rules for your zone could be obtained from https://github.com/esp8266/Arduino/blob/master/cores/esp8266/TZ.h
-   */
-  //configTzTime(time_zone, ntpServer1, ntpServer2);
-#endif // if 0
-
-
+    /**
+     * A more convenient approach to handle TimeZones with daylightOffset 
+     * would be to specify a environmnet variable with TimeZone definition including daylight adjustmnet rules.
+     * A list of rules for your zone could be obtained from https://github.com/esp8266/Arduino/blob/master/cores/esp8266/TZ.h
+     */
+    //configTzTime(time_zone, ntpServer1, ntpServer2);
 
     //Connect to the WiFi network
     connectToWiFi(networkName, networkPswd);
@@ -487,34 +460,33 @@ void setup()
 //
 void loop() 
 {
+    if(!getLocalTime(&g_timeInfo))
+    {
+        Serial.println("No time available (yet)");
+        g_timeInfo.tm_min = 0;
+        g_timeInfo.tm_sec = 0;
+        g_timeInfo.tm_hour = 0;
+        digitalWrite(LED_BUILTIN, LOW);    // turn the LED off
+    }
 
-#if 1
-  // blink the LED as a health indicator
-  digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
-  //delay(3000);                       
-  //digitalWrite(LED_BUILTIN, LOW);    // turn the LED off by making the voltage LOW
-#else
-  // blink the LED as a health indicator
-  digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
-  delay(100);
-  digitalWrite(LED_BUILTIN, LOW);    // turn the LED off by making the voltage LOW
-  delay(100);
-  digitalWrite(LED_BUILTIN, HIGH);
-  delay(100);
-  digitalWrite(LED_BUILTIN, LOW);
-  delay(100);
-  digitalWrite(LED_BUILTIN, HIGH);
-  delay(100);
-  digitalWrite(LED_BUILTIN, LOW);
-#endif
+    print_sensor_data();
+    print_battery_data();
+    printLocalTime();                   // it will take some time to sync time
 
-  print_sensor_data();
-  print_battery_data();
-  printLocalTime();     // it will take some time to sync time :)
+    send_UDP();
 
-  send_UDP();
+    delay(1000);                       // wait for a second
 
-  delay(1000);                       // wait for a second
-  
-  go_to_sleep();
+    if( (g_timeInfo.tm_min > 0) && (g_timeInfo.tm_min < 5) )
+    {
+      digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
+      Serial.println("Lights ON");
+    }
+    else
+    {
+      digitalWrite(LED_BUILTIN, LOW);    // turn the LED off
+      Serial.println("Lights OFF");
+    }  
+
+    go_to_sleep();
 }
