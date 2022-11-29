@@ -72,12 +72,16 @@ WiFiUDP udp;
 
 //sntp
 struct tm g_timeInfo;
+bool g_sntpSuccess = false;
 
 // battery sensing
 SFE_MAX1704X lipo(MAX1704X_MAX17048); // Allow access to all the 17048 features
 
 // weather measurement
 BME280 mySensor;
+
+// light status
+bool g_lightsAreOn = false;
 
 
 //
@@ -97,7 +101,9 @@ BME280 mySensor;
 // a timer to wake it up and how to store data in
 // RTC memory to use it over reboots
 #define uS_TO_S_FACTOR 1000000ULL   // Conversion factor for micro seconds to seconds 
-#define TIME_TO_SLEEP  10            // Time ESP32 will go to sleep (in seconds) */
+#define SECONDS_PER_MINUTE 60
+//#define TIME_TO_SLEEP_SECS  SECONDS_PER_MINUTE * 10            // Time ESP32 will go to sleep (in seconds) */
+#define TIME_TO_SLEEP_SECS  10
 RTC_DATA_ATTR int bootCount = 0;
 
 // Adjust the local Reference Pressure
@@ -160,7 +166,7 @@ void print_battery_data()
 
 void print_sensor_data()
 {
-  Serial.print("--------------------------\n");
+
   Serial.print("Humidity: ");
   Serial.print(mySensor.readFloatHumidity(), 0);
 
@@ -284,8 +290,8 @@ void wakeup_timer_setup()
     //  First we configure the wake up source
     //  We set our ESP32 to wake up every 5 seconds
 
-    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
-    Serial.println("Setup ESP32 to sleep for every " + String(TIME_TO_SLEEP) + " Seconds");
+    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP_SECS * uS_TO_S_FACTOR);
+    Serial.println("Setup ESP32 to sleep for every " + String(TIME_TO_SLEEP_SECS) + " Seconds");
 
     // Next we decide what all peripherals to shut down/keep on
     // By default, ESP32 will automatically power down the peripherals
@@ -299,7 +305,7 @@ void wakeup_timer_setup()
     //Serial.println("Configured all RTC Peripherals to be powered down in sleep");
 }
 
-void go_to_sleep()
+void go_to_light_sleep()
 {
     // Now that we have setup a wake cause and if needed setup the
     // peripherals state in deep sleep, we can now start going to
@@ -308,13 +314,35 @@ void go_to_sleep()
     // sleep was started, it will sleep forever unless hardware
     // reset occurs.
 
-    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
-    Serial.println("Setup ESP32 to sleep for every " + String(TIME_TO_SLEEP) + " Seconds");
+    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP_SECS * uS_TO_S_FACTOR);
+    Serial.println("Setup ESP32 to sleep for every " + String(TIME_TO_SLEEP_SECS) + " Seconds");
 
-    Serial.println("Going to sleep now");
+    Serial.println("Going to light sleep now");
     Serial.flush(); 
 
 #if 0
+    esp_deep_sleep_start();
+#else
+    esp_light_sleep_start();
+#endif
+}
+
+void go_to_deep_sleep()
+{
+    // Now that we have setup a wake cause and if needed setup the
+    // peripherals state in deep sleep, we can now start going to
+    // deep sleep.
+    // In the case that no wake up sources were provided but deep
+    // sleep was started, it will sleep forever unless hardware
+    // reset occurs.
+
+    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP_SECS * uS_TO_S_FACTOR);
+    Serial.println("Setup ESP32 to sleep for every " + String(TIME_TO_SLEEP_SECS) + " Seconds");
+
+    Serial.println("Going to deep sleep now");
+    Serial.flush(); 
+
+#if 1
     esp_deep_sleep_start();
 #else
     esp_light_sleep_start();
@@ -365,8 +393,10 @@ void send_UDP()
     if(connected)
     {
         udp.beginPacket(udpAddress,udpPort);
+        udp.printf("Time is %s\n", g_sntpSuccess ? "valid" : "NOT valid");
         udp.printf("Time: %d:%.2d:%.2d\n", g_timeInfo.tm_hour, g_timeInfo.tm_min, g_timeInfo.tm_sec);
         udp.printf("Seconds since boot: %lu\n", millis()/1000);
+        udp.printf("Lights are %s\n", g_lightsAreOn ? "ON" : "OFF");
         udp.printf("Temperature: %1.2f deg F\n", mySensor.readTempF());
         udp.printf("Pressure: %1.2f inHg\n", mySensor.readFloatPressure() / 3386.39);
         udp.printf("Humidity: %1.2f\n", mySensor.readFloatHumidity());
@@ -397,6 +427,7 @@ void printLocalTime()
 void timeavailable(struct timeval *t)
 {
     Serial.println("Got time adjustment from NTP!");
+    g_sntpSuccess = true;
     printLocalTime();
 }
 
@@ -453,6 +484,9 @@ void setup()
     setup_bme_sensor();
 }
 
+#define HOUR_LIGHTS_ON  12
+#define HOUR_LIGHTS_OFF 16
+
 //  
 // Use the on board LEDs as health indicators
 // Multicast the environment and system info
@@ -460,6 +494,20 @@ void setup()
 //
 void loop() 
 {
+
+#ifdef RGB_BUILTIN
+  digitalWrite(RGB_BUILTIN, HIGH);   // Turn the RGB LED white
+  delay(100);
+  digitalWrite(RGB_BUILTIN, LOW);    // Turn the RGB LED off
+  delay(100);
+#endif
+
+    // during a light sleep, we'll lose contact with Wifi, so reconnect
+    if(!connected)
+    {
+        printf("Not connected\n");
+    }
+
     if(!getLocalTime(&g_timeInfo))
     {
         Serial.println("No time available (yet)");
@@ -469,24 +517,66 @@ void loop()
         digitalWrite(LED_BUILTIN, LOW);    // turn the LED off
     }
 
-    print_sensor_data();
-    print_battery_data();
-    printLocalTime();                   // it will take some time to sync time
+    // cut down the debug niose when time is unknown
+    if(g_sntpSuccess)
+    {
+        Serial.print("--------------------------\n");
+        printLocalTime();                   // it will take some time to sync time
+        print_sensor_data();
+        print_battery_data();
+    }
 
-    send_UDP();
 
+#if 0  // to test the load outputs
+    digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
+    delay(3000);                       // wait for a second
+    digitalWrite(LED_BUILTIN, LOW);    // turn the LED off
+    delay(3000);                       
+
+    
+#endif
+
+
+#if 0
+  neopixelWrite(RGB_BUILTIN,0,0,RGB_BRIGHTNESS); // Blue
+  delay(100);
+  neopixelWrite(RGB_BUILTIN,0,0,0); // Off / black
+  delay(100);
+#endif
+
+#if 1
     delay(1000);                       // wait for a second
 
-    if( (g_timeInfo.tm_min > 0) && (g_timeInfo.tm_min < 5) )
+    // don't sleep until time is valid
+    if(g_sntpSuccess)
     {
-      digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
-      Serial.println("Lights ON");
+
+        // lights on between 4:00 PM and 8:00 PM
+        if( (g_timeInfo.tm_hour >= HOUR_LIGHTS_ON) && (g_timeInfo.tm_hour < HOUR_LIGHTS_OFF) )
+        {
+            digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
+            Serial.println("Lights ON");
+            g_lightsAreOn = true;
+            neopixelWrite(RGB_BUILTIN,0,RGB_BRIGHTNESS,0); // Green
+            delay(100);
+            send_UDP();
+            go_to_light_sleep();
+        }
+        else
+        {
+            digitalWrite(LED_BUILTIN, LOW);    // turn the LED off
+            Serial.println("Lights OFF");
+            g_lightsAreOn = false;
+            neopixelWrite(RGB_BUILTIN,RGB_BRIGHTNESS,0,0); // Red
+            delay(100);
+            send_UDP();
+            go_to_deep_sleep();
+        }  
     }
     else
     {
-      digitalWrite(LED_BUILTIN, LOW);    // turn the LED off
-      Serial.println("Lights OFF");
-    }  
+        Serial.println("Waiting for SNTP\n");
+    }
+#endif
 
-    go_to_sleep();
 }
