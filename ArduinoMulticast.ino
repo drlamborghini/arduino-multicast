@@ -367,10 +367,11 @@ void connectToWiFi(const char * ssid, const char * pwd)
 //wifi event handler
 void WiFiEvent(WiFiEvent_t event)
 {
-    switch(event) {
+    switch(event) 
+    {
       case ARDUINO_EVENT_WIFI_STA_GOT_IP:
           //When connected set 
-          Serial.print("\nWiFi connected! IP address: ");
+          Serial.print("WiFi connected! IP address: ");
           Serial.println(WiFi.localIP());  
           //initializes the UDP state
           //This initializes the transfer buffer
@@ -378,7 +379,7 @@ void WiFiEvent(WiFiEvent_t event)
           connected = true;
           break;
       case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
-          Serial.println("\nWiFi lost connection");
+          Serial.println("WiFi lost connection");
           connected = false;
           break;
       default: break;
@@ -431,17 +432,9 @@ void timeavailable(struct timeval *t)
     printLocalTime();
 }
 
-//
-// Setup the BME280 and Wifi connections
-//
-void setup() 
+void setup_SNTP()
 {
-    // initialize digital pin LED_BUILTIN as an output.
-    pinMode(LED_BUILTIN, OUTPUT);
-
-    // Set the terminal baud rate
-    Serial.begin(115200);
-    delay(100);
+    printf("Setting up SNTP\n");
 
     // set notification call-back function
     sntp_set_time_sync_notification_cb( timeavailable );
@@ -469,6 +462,23 @@ void setup()
      * A list of rules for your zone could be obtained from https://github.com/esp8266/Arduino/blob/master/cores/esp8266/TZ.h
      */
     //configTzTime(time_zone, ntpServer1, ntpServer2);
+}
+
+
+//
+// Setup the BME280 and Wifi connections
+//
+void setup() 
+{
+    // initialize digital pin LED_BUILTIN as an output.
+    pinMode(LED_BUILTIN, OUTPUT);
+
+    // Set the terminal baud rate
+    Serial.begin(115200);
+    delay(100);
+
+    setup_SNTP();
+
 
     //Connect to the WiFi network
     connectToWiFi(networkName, networkPswd);
@@ -506,6 +516,9 @@ void loop()
     if(!connected)
     {
         printf("Not connected\n");
+        neopixelWrite(RGB_BUILTIN,0,0,RGB_BRIGHTNESS); // Blue
+        delay(100);
+        connectToWiFi(networkName, networkPswd);
     }
 
     if(!getLocalTime(&g_timeInfo))
