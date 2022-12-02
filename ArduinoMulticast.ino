@@ -102,8 +102,7 @@ bool g_lightsAreOn = false;
 // RTC memory to use it over reboots
 #define uS_TO_S_FACTOR 1000000ULL   // Conversion factor for micro seconds to seconds 
 #define SECONDS_PER_MINUTE 60
-//#define TIME_TO_SLEEP_SECS  SECONDS_PER_MINUTE * 10            // Time ESP32 will go to sleep (in seconds) */
-#define TIME_TO_SLEEP_SECS  10
+#define TIME_TO_SLEEP_SECS  (10 * SECONDS_PER_MINUTE)
 RTC_DATA_ATTR int bootCount = 0;
 
 // Adjust the local Reference Pressure
@@ -494,8 +493,8 @@ void setup()
     setup_bme_sensor();
 }
 
-#define HOUR_LIGHTS_ON  12
-#define HOUR_LIGHTS_OFF 16
+#define HOUR_LIGHTS_ON  16
+#define HOUR_LIGHTS_OFF 20
 
 //  
 // Use the on board LEDs as health indicators
@@ -545,8 +544,6 @@ void loop()
     delay(3000);                       // wait for a second
     digitalWrite(LED_BUILTIN, LOW);    // turn the LED off
     delay(3000);                       
-
-    
 #endif
 
 
@@ -558,7 +555,7 @@ void loop()
 #endif
 
 #if 1
-    delay(1000);                       // wait for a second
+    delay(5000);                       // wait for a second
 
     // don't sleep until time is valid
     if(g_sntpSuccess)
