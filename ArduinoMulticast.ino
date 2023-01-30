@@ -66,6 +66,8 @@ const int udpPort = 3333;
 
 //Are we currently connected?
 boolean connected = false;
+int g_connectCount = 0;
+#define MAX_CONNECT_RETRIES 5
 
 //The udp library class
 WiFiUDP udp;
@@ -81,12 +83,34 @@ SFE_MAX1704X lipo(MAX1704X_MAX17048); // Allow access to all the 17048 features
 BME280 mySensor;
 
 // light status
-bool g_lightsAreOn = false;
+#define HOUR_LIGHTS_ON  12 //17
+#define HOUR_LIGHTS_OFF 18
+#define HOUR_SUN_RISE   6
+#define HOUR_SUN_SET    17
+#define IS_DAY_TIME(hour) ( (hour > HOUR_SUN_RISE) && (hour < HOUR_SUN_SET) )
 
+#define VOLTAGE_LIGHTS_OFF 3.50
+#define VOLTAGE_LOW_LIMIT 3.20
+
+#define uS_TO_S_FACTOR 1000000ULL   // Conversion factor for micro seconds to seconds 
+#define SECONDS_PER_MINUTE 60
+#define MILLISECONDS_PER_SECOND 1000
+#define TIME_TO_SLEEP_MINS 5
+#define TIME_TO_SLEEP_SECS (TIME_TO_SLEEP_MINS * SECONDS_PER_MINUTE)
+#define HALF_HOUR_BOOT_COUNTS (30 / TIME_TO_SLEEP_MINS)
+#define ONE_HOUR_BOOT_COUNTS (60 / TIME_TO_SLEEP_MINS)
+#define LIGHTS_OFF_BOOT_MAX HALF_HOUR_BOOT_COUNTS
+
+#define CONNECTION_DELAY_MILLISECONDS 5000
+
+RTC_DATA_ATTR int bootCount = 0;
+RTC_DATA_ATTR int lightIsOn = 0;
+bool g_lightsAreOn = false;
+int sleepState = 0;
 
 //
 // timer wakeup configuration
-//
+//  
 // Simple Deep Sleep with Timer Wake Up
 // =====================================
 // ESP32 offers a deep sleep mode for effective power
@@ -100,10 +124,7 @@ bool g_lightsAreOn = false;
 // This code displays the most basic deep sleep with
 // a timer to wake it up and how to store data in
 // RTC memory to use it over reboots
-#define uS_TO_S_FACTOR 1000000ULL   // Conversion factor for micro seconds to seconds 
-#define SECONDS_PER_MINUTE 60
-#define TIME_TO_SLEEP_SECS  (10 * SECONDS_PER_MINUTE)
-RTC_DATA_ATTR int bootCount = 0;
+
 
 // Adjust the local Reference Pressure
 // Nathan Seidle @ SparkFun Electronics
@@ -193,7 +214,7 @@ void print_sensor_data()
 #if 0
 // Now, let us define the response (HTML Page) that will be sent back to the device/user which sent the request. The function handles the server that has been started and controls all the endpoint functions when receiving a request.
 // In here we can see, the server will send a response code '200' with content as 'text/html' and finally the main HTML text. Below is the way HTML text is responded -
-String SendHTML()
+String send_HTML()
 {
     String ptr = "<!DOCTYPE html> <html>\n";
     ptr +="<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n";
@@ -314,19 +335,13 @@ void go_to_light_sleep()
     // reset occurs.
 
     esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP_SECS * uS_TO_S_FACTOR);
-    Serial.println("Setup ESP32 to sleep for every " + String(TIME_TO_SLEEP_SECS) + " Seconds");
-
-    Serial.println("Going to light sleep now");
+    Serial.println("Going to light sleep for " + String(TIME_TO_SLEEP_SECS) + " Seconds");
     Serial.flush(); 
 
-#if 0
-    esp_deep_sleep_start();
-#else
     esp_light_sleep_start();
-#endif
 }
 
-void go_to_deep_sleep()
+void go_to_deep_sleep(int timeToSleepMins)
 {
     // Now that we have setup a wake cause and if needed setup the
     // peripherals state in deep sleep, we can now start going to
@@ -334,18 +349,13 @@ void go_to_deep_sleep()
     // In the case that no wake up sources were provided but deep
     // sleep was started, it will sleep forever unless hardware
     // reset occurs.
-
-    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP_SECS * uS_TO_S_FACTOR);
-    Serial.println("Setup ESP32 to sleep for every " + String(TIME_TO_SLEEP_SECS) + " Seconds");
-
-    Serial.println("Going to deep sleep now");
+    
+    int timeToSleepSecs = timeToSleepMins * SECONDS_PER_MINUTE;
+    esp_sleep_enable_timer_wakeup(timeToSleepSecs * uS_TO_S_FACTOR);
+    Serial.println("Going to deep sleep for " + String(TIME_TO_SLEEP_SECS) + " Seconds");
     Serial.flush(); 
 
-#if 1
     esp_deep_sleep_start();
-#else
-    esp_light_sleep_start();
-#endif
 }
 
 void connectToWiFi(const char * ssid, const char * pwd)
@@ -355,7 +365,7 @@ void connectToWiFi(const char * ssid, const char * pwd)
     // delete old config
     WiFi.disconnect(true);
     //register event handler
-    WiFi.onEvent(WiFiEvent);
+    WiFi.onEvent(wifi_event);
     
     //Initiate connection
     WiFi.begin(ssid, pwd);
@@ -364,7 +374,7 @@ void connectToWiFi(const char * ssid, const char * pwd)
 }
 
 //wifi event handler
-void WiFiEvent(WiFiEvent_t event)
+void wifi_event(WiFiEvent_t event)
 {
     switch(event) 
     {
@@ -390,19 +400,24 @@ void WiFiEvent(WiFiEvent_t event)
 //
 void send_UDP()
 {
-    if(connected)
+    printf("send_UDP\n");
+//    if(connected)
     {
         udp.beginPacket(udpAddress,udpPort);
-        udp.printf("Time is %s\n", g_sntpSuccess ? "valid" : "NOT valid");
-        udp.printf("Time: %d:%.2d:%.2d\n", g_timeInfo.tm_hour, g_timeInfo.tm_min, g_timeInfo.tm_sec);
-        udp.printf("Seconds since boot: %lu\n", millis()/1000);
-        udp.printf("Lights are %s\n", g_lightsAreOn ? "ON" : "OFF");
-        udp.printf("Temperature: %1.2f deg F\n", mySensor.readTempF());
-        udp.printf("Pressure: %1.2f inHg\n", mySensor.readFloatPressure() / 3386.39);
-        udp.printf("Humidity: %1.2f\n", mySensor.readFloatHumidity());
-        udp.printf("Voltage: %1.2f Vdc\n", lipo.getVoltage());
-        udp.printf("Charge: %1.2f percent\n", lipo.getSOC());
-        udp.printf("Rate: %1.2f percent/hour\n", lipo.getChangeRate());
+//        udp.printf("Time is %s\n", g_sntpSuccess ? "valid" : "NOT valid");
+        udp.printf("%2.2d:%.2d:%.2d\t", g_timeInfo.tm_hour, g_timeInfo.tm_min, g_timeInfo.tm_sec);
+        udp.printf("%1.2f\t", mySensor.readTempF());
+        udp.printf("%1.2f\t", mySensor.readFloatPressure() / 3386.39);
+        udp.printf("%1.2f\t", mySensor.readFloatHumidity());
+        udp.printf("%s\t", g_lightsAreOn ? "ON" : "OFF");
+
+
+
+//        udp.printf("Time on:%d\tTime off:%d\t", HOUR_LIGHTS_ON, HOUR_LIGHTS_OFF);
+//        udp.printf("Seconds since boot: %lu\n", millis()/1000);
+        udp.printf("%1.2f\t", lipo.getVoltage());
+        udp.printf("%1.2f\t", lipo.getSOC());
+        udp.printf("%1.2f\t", lipo.getChangeRate());
         udp.endPacket();
     }
 }
@@ -418,17 +433,17 @@ const int   daylightOffset_sec = 3600;
 
 const char* time_zone = "CET-1CEST,M3.5.0,M10.5.0/3";  // TimeZone rule for Europe/Rome including daylight adjustment rules (optional)
 
-void printLocalTime()
+void print_local_time()
 {
     Serial.println(&g_timeInfo, "%A, %B %d %Y %H:%M:%S");
 }
 
 // Callback function (get's called when time adjusts via NTP)
-void timeavailable(struct timeval *t)
+void time_available(struct timeval *t)
 {
     Serial.println("Got time adjustment from NTP!");
     g_sntpSuccess = true;
-    printLocalTime();
+    print_local_time();
 }
 
 void setup_SNTP()
@@ -436,7 +451,7 @@ void setup_SNTP()
     printf("Setting up SNTP\n");
 
     // set notification call-back function
-    sntp_set_time_sync_notification_cb( timeavailable );
+    sntp_set_time_sync_notification_cb( time_available );
 
     /**
      * NTP server address could be aquired via DHCP,
@@ -493,17 +508,24 @@ void setup()
     setup_bme_sensor();
 }
 
-#define HOUR_LIGHTS_ON  16
-#define HOUR_LIGHTS_OFF 20
 
 //  
 // Use the on board LEDs as health indicators
 // Multicast the environment and system info
 // Put the system to sleep to extend battery life
 //
+
+// 1. if not connected to wifi, wait and try again, if retries exceeded go to deep sleep
+// 2. if connected, check SNTP data, if invalid wait and try again (todo: retries?)
+// 3. if connected and SNTP data valid, read voltage
+//      a. if voltage is below thresshold, go to deep sleep
+//      b. if voltage is okay and time for lights ON, set the GPIO, go to light sleep
+//      b, else go to deep sleep
+
+
+
 void loop() 
 {
-
 #ifdef RGB_BUILTIN
   digitalWrite(RGB_BUILTIN, HIGH);   // Turn the RGB LED white
   delay(100);
@@ -511,13 +533,41 @@ void loop()
   delay(100);
 #endif
 
-    // during a light sleep, we'll lose contact with Wifi, so reconnect
+#if 0  // to test the load outputs
+    digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
+    delay(3000);                       // wait for a second
+    digitalWrite(LED_BUILTIN, LOW);    // turn the LED off
+    delay(3000);                       
+    go_to_deep_sleep(LONG_DEEP_SLEEP_MINS);
+#endif
+
+    // if the charge drops to 0%, just deep sleep
+    float batteryVoltageVdc = lipo.getVoltage();
+//    float batteryChargeRate = lipo.getChangeRate();
+    if(batteryVoltageVdc < VOLTAGE_LOW_LIMIT)
+    {
+        printf("\nZero Voltage Threshold%1.2f\n", batteryVoltageVdc);
+        digitalWrite(LED_BUILTIN, LOW);    // turn the LED off
+        lightIsOn = 0;
+        bootCount = 0;
+        go_to_deep_sleep(TIME_TO_SLEEP_MINS);
+    }
+
+//if( isNightTime and batteryVolatage < 3.4 AND )
+
+    // during a light sleep, we may lose contact with Wifi, so reconnect
     if(!connected)
     {
+        ++g_connectCount;
         printf("Not connected\n");
         neopixelWrite(RGB_BUILTIN,0,0,RGB_BRIGHTNESS); // Blue
         delay(100);
         connectToWiFi(networkName, networkPswd);
+    }
+    else
+    {
+        printf("Connected\n");
+        g_connectCount = 0;
     }
 
     if(!getLocalTime(&g_timeInfo))
@@ -527,66 +577,93 @@ void loop()
         g_timeInfo.tm_sec = 0;
         g_timeInfo.tm_hour = 0;
         digitalWrite(LED_BUILTIN, LOW);    // turn the LED off
+        lightIsOn = 0;
+
+    }
+    else
+    {
+        printf("Time is valid\n");
     }
 
     // cut down the debug niose when time is unknown
+    printf("g_sntpSuccess %s\n", g_sntpSuccess ? "True" : "Flase");
     if(g_sntpSuccess)
     {
-        Serial.print("--------------------------\n");
-        printLocalTime();                   // it will take some time to sync time
+        print_local_time();                   // it will take some time to sync time
         print_sensor_data();
         print_battery_data();
     }
 
+    printf("CONNECTION_DELAY_MILLISECONDS %d\n", CONNECTION_DELAY_MILLISECONDS);
+    delay(CONNECTION_DELAY_MILLISECONDS);                       // wait for connection
 
-#if 0  // to test the load outputs
-    digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
-    delay(3000);                       // wait for a second
-    digitalWrite(LED_BUILTIN, LOW);    // turn the LED off
-    delay(3000);                       
-#endif
+printf("IS_DAY_TIME: %d\n", IS_DAY_TIME(g_timeInfo.tm_hour));
 
-
-#if 0
-  neopixelWrite(RGB_BUILTIN,0,0,RGB_BRIGHTNESS); // Blue
-  delay(100);
-  neopixelWrite(RGB_BUILTIN,0,0,0); // Off / black
-  delay(100);
-#endif
-
-#if 1
-    delay(5000);                       // wait for a second
-
-    // don't sleep until time is valid
-    if(g_sntpSuccess)
+    // connection is made, sntp time is valid, set the lights according to time and charge
+    if( (g_sntpSuccess)  && (g_timeInfo.tm_hour > 0) )
     {
-
-        // lights on between 4:00 PM and 8:00 PM
-        if( (g_timeInfo.tm_hour >= HOUR_LIGHTS_ON) && (g_timeInfo.tm_hour < HOUR_LIGHTS_OFF) )
+        // Battery is okay, check the time.
+        if(!IS_DAY_TIME(g_timeInfo.tm_hour))
         {
-            digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
-            Serial.println("Lights ON");
-            g_lightsAreOn = true;
-            neopixelWrite(RGB_BUILTIN,0,RGB_BRIGHTNESS,0); // Green
-            delay(100);
-            send_UDP();
-            go_to_light_sleep();
-        }
-        else
+            // if the charge drops below 25%, Lights out and deep sleep
+            batteryVoltageVdc = lipo.getVoltage();
+            if(batteryVoltageVdc < VOLTAGE_LIGHTS_OFF)
+            {
+                if(++bootCount > LIGHTS_OFF_BOOT_MAX)     // filter out edge noise with multiple samples
+                {
+                    digitalWrite(LED_BUILTIN, LOW);    //turn the LED off
+                    neopixelWrite(RGB_BUILTIN,RGB_BRIGHTNESS,0,0); // Red
+                    lightIsOn = 0;
+                    g_lightsAreOn = false;
+//                    go_to_deep_sleep(LONG_DEEP_SLEEP_MINS);
+                }
+            }
+            else // battery is above the LIGHTS OUT threshold, so we can turn on the lights    
+            {
+                bootCount = 0;  
+                digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
+                printf("Lights ON, light sleep\n");
+                g_lightsAreOn = true;
+                lightIsOn = 1;
+                neopixelWrite(RGB_BUILTIN,0,RGB_BRIGHTNESS,0); // Green
+    //           go_to_light_sleep();
+            }
+        }   
+        else    // its day time
         {
-            digitalWrite(LED_BUILTIN, LOW);    // turn the LED off
-            Serial.println("Lights OFF");
-            g_lightsAreOn = false;
+            printf("Lights OFF, deep sleep\n");
+            digitalWrite(LED_BUILTIN, LOW);    //turn the LED off
             neopixelWrite(RGB_BUILTIN,RGB_BRIGHTNESS,0,0); // Red
-            delay(100);
-            send_UDP();
-            go_to_deep_sleep();
-        }  
+            g_lightsAreOn = false;
+            lightIsOn = 0;
+//            go_to_deep_sleep(TIME_TO_SLEEP_MINS);
+        }
+
+        // always send data
+        send_UDP();
+        delay(100);
+
+        // set the lights
+        if(g_lightsAreOn)
+            go_to_light_sleep();
+        else
+            go_to_deep_sleep(TIME_TO_SLEEP_MINS);
     }
     else
     {
         Serial.println("Waiting for SNTP\n");
     }
-#endif
 
+    // bail on the connection after max retries
+    // try again after a deep sleep
+    if(g_connectCount >= MAX_CONNECT_RETRIES)    
+    {
+        digitalWrite(LED_BUILTIN, LOW);    // turn the LED off
+        neopixelWrite(RGB_BUILTIN,RGB_BRIGHTNESS,0,0); // Red
+        printf("Connection retries exceeded [%d], Lights OFF, deep sleep", g_connectCount);
+        g_lightsAreOn = false;
+        lightIsOn = 0;
+        bootCount = 0;
+        go_to_deep_sleep(TIME_TO_SLEEP_MINS);
+    }  
 }
