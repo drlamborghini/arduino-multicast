@@ -1,17 +1,16 @@
-/*
-  Blink
-
-  Turns an LED on for one second, then off for one second, repeatedly.
-
-  Most Arduinos have an on-board LED you can control. On the UNO, MEGA and ZERO
-  it is attached to digital pin 13, on MKR1000 on pin 6. LED_BUILTIN is set to
-  the correct LED pin independent of which board is used.
-  If you want to know what pin the on-board LED is connected to on your Arduino
-  model, check the Technical Specs of your board at:
-  https://www.arduino.cc/en/Main/Products
-
-  https://www.arduino.cc/en/Tutorial/BuiltInExamples/Blink
-*/
+// 
+// ArduinoMulticast
+// 
+// A project to read environmental sensors and system conditions 
+// which then multicasts information as ASCII text
+// 
+// Intended for use with the SparkFun ESP32 Thing Plus C and the SparkFun BME280 environmential sensor 
+// connected over I2C (Qwicc).
+// 
+// Also uses ESP32 ultra low power mode to extend battery life
+// 
+// The first version included an http server for testing
+//  
 
 #include <WebServer.h>
 #include <Uri.h>
@@ -28,33 +27,163 @@
 #include <WiFiClient.h>
 #include <WiFi.h>
 
-const char* ssid = "ninemile";    // Enter SSID here
-const char* password = "southwest15"; // Enter Password here
-static int count = 0;
-
-/*
-  Adjust the local Reference Pressure
-  Nathan Seidle @ SparkFun Electronics
-  March 23, 2018
-  Feel like supporting our work? Buy a board from SparkFun!
-  https://www.sparkfun.com/products/14348 - Qwiic Combo Board
-  https://www.sparkfun.com/products/13676 - BME280 Breakout Board
-  'Sea level' pressure changes with high and low pressure weather movement. 
-  This sketch demonstrates how to change sea level 101325Pa to a different value.
-  See Issue 1: https://github.com/sparkfun/SparkFun_BME280_Arduino_Library/issues/1
-  Google 'sea level pressure map' for more information:
-  http://weather.unisys.com/surface/sfc_con.php?image=pr&inv=0&t=cur
-  https://www.atmos.illinois.edu/weather/tree/viewer.pl?launch/sfcslp
-  29.92 inHg = 1.0 atm = 101325 Pa = 1013.25 mb
-*/
-
+// for BME280
 #include <Wire.h>
 #include "SparkFunBME280.h"
 #include <SparkFun_MAX1704x_Fuel_Gauge_Arduino_Library.h> 
 
+// for sntp
+#include "time.h"
+#include "sntp.h"
+
+// WiFi network name and password:
+const char * networkName = "ninemile";
+const char * networkPswd = "southwest15";
+
+// local wifi credentials here:
+const char* ssid = "ninemile";    // Enter SSID here
+const char* password = "southwest15"; // Enter Password here
+
+
+// IP address to send UDP data to:
+// either use the ip address of the server or 
+// a network broadcast address
+const char * udpAddress = "10.0.0.255";
+const int udpPort = 3333;
+
+//Are we currently connected?
+boolean g_connected = false;
+int g_connectCount = 0;
+#define MAX_CONNECT_RETRIES 5
+#define CONNECTION_DELAY_MILLISECONDS 5000
+
+//The udp library class
+WiFiUDP udp;
+
+//sntp
+struct tm g_timeInfo;
+bool g_sntpSuccess = false;
+
+// battery sensing
 SFE_MAX1704X lipo(MAX1704X_MAX17048); // Allow access to all the 17048 features
+
+// weather measurement
 BME280 mySensor;
 
+// light status
+RTC_DATA_ATTR int nv_bootCount = 0;
+bool g_lightsAreOn = false;
+
+#define HOUR_LIGHTS_ON  12 //17
+#define HOUR_LIGHTS_OFF 18
+#define HOUR_SUN_RISE   6
+#define HOUR_SUN_SET    18
+#define IS_DAY_TIME(hour) ( (hour > HOUR_SUN_RISE) && (hour < HOUR_SUN_SET) )
+
+#define VOLTAGE_LIGHTS_OFF 3.40
+#define VOLTAGE_LOW_LIMIT 3.20
+
+#define uS_TO_S_FACTOR 1000000ULL   // Conversion factor for micro seconds to seconds 
+#define SECONDS_PER_MINUTE 60
+#define MILLISECONDS_PER_SECOND 1000
+#define TIME_TO_SLEEP_MINS 5
+#define TIME_TO_SLEEP_SECS (TIME_TO_SLEEP_MINS * SECONDS_PER_MINUTE)
+#define HALF_HOUR_BOOT_COUNTS (30 / TIME_TO_SLEEP_MINS)
+#define ONE_HOUR_BOOT_COUNTS (60 / TIME_TO_SLEEP_MINS)
+#define LIGHTS_OFF_BOOT_MAX HALF_HOUR_BOOT_COUNTS
+
+
+//
+// Wifi 
+//
+void connectToWiFi(const char * ssid, const char * pwd)
+{
+    Serial.println("Connecting to WiFi network: " + String(ssid));
+
+    // delete old config
+    WiFi.disconnect(true);
+    //register event handler
+    WiFi.onEvent(wifi_event);
+    
+    //Initiate connection
+    WiFi.begin(ssid, pwd);
+
+    Serial.println("Waiting for WIFI connection...");
+}
+
+//wifi event handler
+void wifi_event(WiFiEvent_t event)
+{
+    switch(event) 
+    {
+      case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+          //When connected set 
+          Serial.print("WiFi connected! IP address: ");
+          Serial.println(WiFi.localIP());  
+          //initializes the UDP state
+          //This initializes the transfer buffer
+          udp.begin(WiFi.localIP(),udpPort);
+          g_connected = true;
+          break;
+      case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+          Serial.println("WiFi lost connection");
+          g_connected = false;
+          break;
+      default: break;
+    }
+}
+
+//
+// sntp setup
+//
+const char* ntpServer1 = "pool.ntp.org";
+const char* ntpServer2 = "time.nist.gov";
+const long  gmtOffset_sec = (-5 * 3600);
+const int   daylightOffset_sec = 3600;
+const char* time_zone = "CET-1CEST,M3.5.0,M10.5.0/3";  // TimeZone rule for Europe/Rome including daylight adjustment rules (optional)
+
+// Callback function (get's called when time adjusts via NTP)
+void time_available(struct timeval *t)
+{
+    printf("Got time adjustment from NTP\t");
+    Serial.println(&g_timeInfo, "%A, %B %d %Y %H:%M:%S\n");
+    g_sntpSuccess = true;
+}
+
+void setup_SNTP()
+{
+    printf("Setting up SNTP\n");
+
+    // set notification call-back function
+    sntp_set_time_sync_notification_cb( time_available );
+
+    /**
+     * NTP server address could be aquired via DHCP,
+     *
+     * NOTE: This call should be made BEFORE esp32 aquires IP address via DHCP,
+     * otherwise SNTP option 42 would be rejected by default.
+     * NOTE: configTime() function call if made AFTER DHCP-client run
+     * will OVERRIDE aquired NTP server address
+     */
+    sntp_servermode_dhcp(1);    // (optional)
+
+    /**
+     * This will set configured ntp servers and constant TimeZone/daylightOffset
+     * should be OK if your time zone does not need to adjust daylightOffset twice a year,
+     * in such a case time adjustment won't be handled automagicaly.
+     */
+    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer1, ntpServer2);
+
+    /**
+     * A more convenient approach to handle TimeZones with daylightOffset 
+     * would be to specify a environmnet variable with TimeZone definition including daylight adjustmnet rules.
+     * A list of rules for your zone could be obtained from https://github.com/esp8266/Arduino/blob/master/cores/esp8266/TZ.h
+     */
+    //configTzTime(time_zone, ntpServer1, ntpServer2);
+}
+
+
+// BME280 board setup with Qwicc
 int setup_bme_sensor()
 {
   Serial.begin(115200);
@@ -62,6 +191,7 @@ int setup_bme_sensor()
 
   Wire.begin();
   Wire.setClock(400000); //Increase to fast I2C speed!
+
   // Set up the MAX17048 LiPo fuel gauge:
   if (lipo.begin() == false) // Connect to the MAX17048 using the default wire port
   {
@@ -72,7 +202,6 @@ int setup_bme_sensor()
   {
       Serial.println("The sensor did not respond. Please check wiring.");
       return -1;
-//      while (1); //Freeze
   }
 
   mySensor.setReferencePressure(101200); //Adjust the sea level pressure used for altitude calculations
@@ -80,6 +209,9 @@ int setup_bme_sensor()
   return 0;
 }
 
+//
+// Debug to serial port
+//
 void print_battery_data()
 {
   // Print the variables:
@@ -100,6 +232,7 @@ void print_battery_data()
 
 void print_sensor_data()
 {
+
   Serial.print("Humidity: ");
   Serial.print(mySensor.readFloatHumidity(), 0);
 
@@ -124,10 +257,295 @@ void print_sensor_data()
   delay(50);
 }
 
+//
+// Method to print the reason by which ESP32
+// has been awaken from sleep
+//
+void print_wakeup_reason()
+{
+    esp_sleep_wakeup_cause_t wakeup_reason;
+
+    wakeup_reason = esp_sleep_get_wakeup_cause();
+
+    switch(wakeup_reason)
+    {
+      case ESP_SLEEP_WAKEUP_EXT0 : Serial.println("Wakeup caused by external signal using RTC_IO"); break;
+      case ESP_SLEEP_WAKEUP_EXT1 : Serial.println("Wakeup caused by external signal using RTC_CNTL"); break;
+      case ESP_SLEEP_WAKEUP_TIMER : Serial.println("Wakeup caused by timer"); break;
+      case ESP_SLEEP_WAKEUP_TOUCHPAD : Serial.println("Wakeup caused by touchpad"); break;
+      case ESP_SLEEP_WAKEUP_ULP : Serial.println("Wakeup caused by ULP program"); break;
+      default : Serial.printf("Wakeup was not caused by deep sleep: %d\n",wakeup_reason); break;
+    }
+}
+
+// This code displays the most basic deep sleep with
+// a timer to wake it up and how to store data in
+// RTC memory to use it over reboots
+//
+// In this mode CPUs, most of the RAM,
+// and all the digital peripherals which are clocked
+// from APB_CLK are powered off. The only parts of
+// the chip which can still be powered on are:
+// RTC controller, RTC peripherals ,and RTC memories
+void wakeup_timer_setup()
+{
+    //Increment boot number and print it every reboot
+    ++nv_bootCount;
+    Serial.println("Boot number: " + String(nv_bootCount));
+
+    //Print the wakeup reason for ESP32
+    print_wakeup_reason();
+
+    //  First we configure the wake up source
+    //  We set our ESP32 to wake up every 5 seconds
+
+    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP_SECS * uS_TO_S_FACTOR);
+    Serial.println("Setup ESP32 to sleep for every " + String(TIME_TO_SLEEP_SECS) + " Seconds");
+
+    // Next we decide what all peripherals to shut down/keep on
+    // By default, ESP32 will automatically power down the peripherals
+    // not needed by the wakeup source, but if you want to be a poweruser
+    // this is for you. Read in detail at the API docs
+    // http://esp-idf.readthedocs.io/en/latest/api-reference/system/deep_sleep.html
+    // Left the line commented as an example of how to configure peripherals.
+    // The line below turns off all RTC peripherals in deep sleep.
+}
+
+void go_to_light_sleep(int timeToSleepMins)
+{
+    // Now that we have setup a wake cause and if needed setup the
+    // peripherals state in deep sleep, we can now start going to
+    // deep sleep.
+    // In the case that no wake up sources were provided but deep
+    // sleep was started, it will sleep forever unless hardware
+    // reset occurs.
+
+    int timeToSleepSecs = timeToSleepMins * SECONDS_PER_MINUTE;
+    esp_sleep_enable_timer_wakeup(timeToSleepSecs * uS_TO_S_FACTOR);
+    Serial.println("Going to light sleep for " + String(TIME_TO_SLEEP_SECS) + " Seconds");
+    Serial.flush(); 
+
+    esp_light_sleep_start();
+}
+
+void go_to_deep_sleep(int timeToSleepMins)
+{
+    // Now that we have setup a wake cause and if needed setup the
+    // peripherals state in deep sleep, we can now start going to
+    // deep sleep.
+    // In the case that no wake up sources were provided but deep
+    // sleep was started, it will sleep forever unless hardware
+    // reset occurs.
+    
+    int timeToSleepSecs = timeToSleepMins * SECONDS_PER_MINUTE;
+    esp_sleep_enable_timer_wakeup(timeToSleepSecs * uS_TO_S_FACTOR);
+    Serial.println("Going to deep sleep for " + String(TIME_TO_SLEEP_SECS) + " Seconds");
+    Serial.flush(); 
+
+    esp_deep_sleep_start();
+}
+
+//
+// form and send a packet
+//
+void send_UDP()
+{
+    printf("send_UDP\n");
+    udp.beginPacket(udpAddress,udpPort);
+    udp.printf("%2.2d:%.2d:%.2d\t", g_timeInfo.tm_hour, g_timeInfo.tm_min, g_timeInfo.tm_sec);
+    udp.printf("%1.2f\t", mySensor.readTempF());
+    udp.printf("%1.2f\t", mySensor.readFloatPressure() / 3386.39);
+    udp.printf("%1.2f\t", mySensor.readFloatHumidity());
+    udp.printf("%s\t", g_lightsAreOn ? "ON" : "OFF");
+    udp.printf("%1.2f\t", lipo.getVoltage());
+    udp.printf("%1.2f\t", lipo.getSOC());
+    udp.printf("%1.2f\t", lipo.getChangeRate());
+    udp.endPacket();
+}
+
+
+
+//
+// Setup the BME280 and Wifi connections
+//
+void setup() 
+{
+    // initialize digital pin LED_BUILTIN as an output.
+    pinMode(LED_BUILTIN, OUTPUT);
+
+    // Set the terminal baud rate
+    Serial.begin(115200);
+    delay(100);
+
+    setup_SNTP();
+
+    //Connect to the WiFi network
+    connectToWiFi(networkName, networkPswd);
+    Serial.println("Connecting to ");
+    Serial.println(ssid);
+
+    Serial.println("");
+    Serial.println("WiFi connected..!");
+    Serial.print("Got IP: ");
+    Serial.println(WiFi.localIP());
+
+    // ready the BME280
+    setup_bme_sensor();
+}
+
+
+// loop function
+//
+// 1. if not connected to wifi, wait and try again, if retries exceeded go to deep sleep
+// 2. if connected, check SNTP data, if invalid wait and try again (todo: retries?)
+// 3. if connected and time is valid, multicast the environment and system info
+// 4. Read voltage
+//      a. if voltage is below thresshold, go to deep sleep
+//      b. if voltage is okay and time for lights ON, set the GPIO, go to light sleep
+//      c. else go to deep sleep
+//
+void loop() 
+{
+#ifdef RGB_BUILTIN
+  digitalWrite(RGB_BUILTIN, HIGH);   // Turn the RGB LED white
+  delay(100);
+  digitalWrite(RGB_BUILTIN, LOW);    // Turn the RGB LED off
+  delay(100);
+#endif
+
+//  
+// Use the on board LEDs as health indicators,
+//  blue = no connection
+//  red = lights off
+//  green = lights on
+//
+#if 0  // to test the load outputs
+    digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
+    delay(3000);                       // wait for a second
+    digitalWrite(LED_BUILTIN, LOW);    // turn the LED off
+    delay(3000);                       
+    go_to_deep_sleep(LONG_DEEP_SLEEP_MINS);
+#endif
+
+    // if the charge drops to 0%, just deep sleep
+    float batteryVoltageVdc = lipo.getVoltage();
+    if(batteryVoltageVdc < VOLTAGE_LOW_LIMIT)
+    {
+        printf("\nZero Voltage Threshold%1.2f\n", batteryVoltageVdc);
+        digitalWrite(LED_BUILTIN, LOW);    // turn the LED off
+        nv_bootCount = 0;
+        go_to_deep_sleep(TIME_TO_SLEEP_MINS);
+    }
+
+    // during a light sleep, we may lose contact with Wifi, so reconnect
+    if(!g_connected)
+    {
+        ++g_connectCount;
+        printf("Not connected\n");
+        neopixelWrite(RGB_BUILTIN,0,0,RGB_BRIGHTNESS); // Blue
+        delay(100);
+        connectToWiFi(networkName, networkPswd);
+    }
+    else
+    {
+        printf("Connected\n");
+        g_connectCount = 0;
+    }
+
+    if(!getLocalTime(&g_timeInfo))
+    {
+        Serial.println("No time available (yet)");
+        g_timeInfo.tm_min = 0;
+        g_timeInfo.tm_sec = 0;
+        g_timeInfo.tm_hour = 0;
+        digitalWrite(LED_BUILTIN, LOW);    // turn the LED off
+    }
+    else
+    {
+        printf("Time is valid\n");
+    }
+
+    // cut down the debug niose when time is unknown
+    printf("g_sntpSuccess %s\n", g_sntpSuccess ? "True" : "False");
+    if(g_sntpSuccess)
+    {
+        print_sensor_data();
+        print_battery_data();
+    }
+    else
+    {
+        printf("CONNECTION_DELAY_MILLISECONDS %d\n", CONNECTION_DELAY_MILLISECONDS);
+        delay(CONNECTION_DELAY_MILLISECONDS);                       // wait for connection
+    }
+
+    // connection is made, sntp time is valid, set the lights according to time and charge
+    if( (g_sntpSuccess)  && (g_timeInfo.tm_hour > 0) )
+    {
+        printf("IS_DAY_TIME: %d\n", IS_DAY_TIME(g_timeInfo.tm_hour));
+
+        // Battery is okay, check the time.
+        if(!IS_DAY_TIME(g_timeInfo.tm_hour))
+        {
+            // if the charge drops below 25%, Lights out and deep sleep
+            batteryVoltageVdc = lipo.getVoltage();
+            if(batteryVoltageVdc < VOLTAGE_LIGHTS_OFF)
+            {
+                if(++nv_bootCount > LIGHTS_OFF_BOOT_MAX)     // filter out edge noise with multiple samples
+                {
+                    digitalWrite(LED_BUILTIN, LOW);    //turn the LED off
+                    neopixelWrite(RGB_BUILTIN,RGB_BRIGHTNESS,0,0); // Red
+                    g_lightsAreOn = false;
+                }
+            }
+            else // battery is above the LIGHTS OUT threshold, so we can turn on the lights    
+            {
+                nv_bootCount = 0;  
+                digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
+                printf("Lights ON, light sleep\n");
+                g_lightsAreOn = true;
+                neopixelWrite(RGB_BUILTIN,0,RGB_BRIGHTNESS,0); // Green
+            }
+        }   
+        else    // its day time
+        {
+            printf("Lights OFF, deep sleep\n");
+            digitalWrite(LED_BUILTIN, LOW);    //turn the LED off
+            neopixelWrite(RGB_BUILTIN,RGB_BRIGHTNESS,0,0); // Red
+            g_lightsAreOn = false;
+        }
+
+        // always send data
+        send_UDP();
+        delay(100);
+
+        // If lights are on, need a light sleep to keep GPIO settings
+        if(g_lightsAreOn)
+            go_to_light_sleep(TIME_TO_SLEEP_MINS);
+        else
+            go_to_deep_sleep(TIME_TO_SLEEP_MINS);
+    }
+    else
+    {
+        printf("Waiting for SNTP\n");
+    }
+
+    // bail on the connection after max retries
+    // try again after a sleep
+    if(g_connectCount >= MAX_CONNECT_RETRIES)    
+    {
+        printf("Connection retries exceeded [%d], Lights OFF, deep sleep", g_connectCount);
+        go_to_light_sleep(TIME_TO_SLEEP_MINS);
+    }  
+}
+
+
+//
+// functions not used in the final version but may be used later
+//
 #if 0
 // Now, let us define the response (HTML Page) that will be sent back to the device/user which sent the request. The function handles the server that has been started and controls all the endpoint functions when receiving a request.
 // In here we can see, the server will send a response code '200' with content as 'text/html' and finally the main HTML text. Below is the way HTML text is responded -
-String SendHTML()
+String send_HTML()
 {
     String ptr = "<!DOCTYPE html> <html>\n";
     ptr +="<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n";
@@ -191,248 +609,3 @@ String SendHTML()
     return ptr;    
 }
 #endif
-
-/*
- * Begin section
- * timer wakeup configuration
- */
-
-/*
-Simple Deep Sleep with Timer Wake Up
-=====================================
-ESP32 offers a deep sleep mode for effective power
-saving as power is an important factor for IoT
-applications. In this mode CPUs, most of the RAM,
-and all the digital peripherals which are clocked
-from APB_CLK are powered off. The only parts of
-the chip which can still be powered on are:
-RTC controller, RTC peripherals ,and RTC memories
-
-This code displays the most basic deep sleep with
-a timer to wake it up and how to store data in
-RTC memory to use it over reboots
-*/
-
-#define uS_TO_S_FACTOR 1000000ULL  /* Conversion factor for micro seconds to seconds */
-#define TIME_TO_SLEEP  5        /* Time ESP32 will go to sleep (in seconds) */
-
-RTC_DATA_ATTR int bootCount = 0;
-
-/*
-Method to print the reason by which ESP32
-has been awaken from sleep
-*/
-void print_wakeup_reason(){
-  esp_sleep_wakeup_cause_t wakeup_reason;
-
-  wakeup_reason = esp_sleep_get_wakeup_cause();
-
-  switch(wakeup_reason)
-  {
-    case ESP_SLEEP_WAKEUP_EXT0 : Serial.println("Wakeup caused by external signal using RTC_IO"); break;
-    case ESP_SLEEP_WAKEUP_EXT1 : Serial.println("Wakeup caused by external signal using RTC_CNTL"); break;
-    case ESP_SLEEP_WAKEUP_TIMER : Serial.println("Wakeup caused by timer"); break;
-    case ESP_SLEEP_WAKEUP_TOUCHPAD : Serial.println("Wakeup caused by touchpad"); break;
-    case ESP_SLEEP_WAKEUP_ULP : Serial.println("Wakeup caused by ULP program"); break;
-    default : Serial.printf("Wakeup was not caused by deep sleep: %d\n",wakeup_reason); break;
-  }
-}
-
-void wakeup_timer_setup()
-{
-  //Increment boot number and print it every reboot
-  ++bootCount;
-  Serial.println("Boot number: " + String(bootCount));
-
-  //Print the wakeup reason for ESP32
-  print_wakeup_reason();
-
-  /*
-  First we configure the wake up source
-  We set our ESP32 to wake up every 5 seconds
-  */
-  esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
-  Serial.println("Setup ESP32 to sleep for every " + String(TIME_TO_SLEEP) + " Seconds");
-
-  /*
-  Next we decide what all peripherals to shut down/keep on
-  By default, ESP32 will automatically power down the peripherals
-  not needed by the wakeup source, but if you want to be a poweruser
-  this is for you. Read in detail at the API docs
-  http://esp-idf.readthedocs.io/en/latest/api-reference/system/deep_sleep.html
-  Left the line commented as an example of how to configure peripherals.
-  The line below turns off all RTC peripherals in deep sleep.
-  */
-  //esp_deep_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_OFF);
-  //Serial.println("Configured all RTC Peripherals to be powered down in sleep");
-
-}
-
-void go_to_sleep()
-{
-  /*
-  Now that we have setup a wake cause and if needed setup the
-  peripherals state in deep sleep, we can now start going to
-  deep sleep.
-  In the case that no wake up sources were provided but deep
-  sleep was started, it will sleep forever unless hardware
-  reset occurs.
-  */
-  Serial.println("Going to sleep now");
-  Serial.flush(); 
-  esp_deep_sleep_start();
-}
-
-/*
- *  End Section
- *  timer wakeup configuration
- */
-
-
-/* UDP
- *  
- */
-/*
- *  This sketch sends random data over UDP on a ESP32 device
- *
- */
-#include <WiFi.h>
-#include <WiFiUdp.h>
-
-// WiFi network name and password:
-const char * networkName = "ninemile";
-const char * networkPswd = "southwest15";
-
-//IP address to send UDP data to:
-// either use the ip address of the server or 
-// a network broadcast address
-const char * udpAddress = "10.0.0.255";
-const int udpPort = 3333;
-
-//Are we currently connected?
-boolean connected = false;
-
-//The udp library class
-WiFiUDP udp;
-
-
-void connectToWiFi(const char * ssid, const char * pwd){
-  Serial.println("Connecting to WiFi network: " + String(ssid));
-
-  // delete old config
-  WiFi.disconnect(true);
-  //register event handler
-  WiFi.onEvent(WiFiEvent);
-  
-  //Initiate connection
-  WiFi.begin(ssid, pwd);
-
-  Serial.println("Waiting for WIFI connection...");
-}
-
-//wifi event handler
-void WiFiEvent(WiFiEvent_t event){
-    switch(event) {
-      case ARDUINO_EVENT_WIFI_STA_GOT_IP:
-          //When connected set 
-          Serial.print("WiFi connected! IP address: ");
-          Serial.println(WiFi.localIP());  
-          //initializes the UDP state
-          //This initializes the transfer buffer
-          udp.begin(WiFi.localIP(),udpPort);
-          connected = true;
-          break;
-      case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
-          Serial.println("WiFi lost connection");
-          connected = false;
-          break;
-      default: break;
-    }
-}
-
-void setup_UDP()
-{
-  // Initilize hardware serial:
-//  Serial.begin(115200);
-  
-  //Connect to the WiFi network
-  connectToWiFi(networkName, networkPswd);
-}
-
-
-void send_UDP()
-{
-  //only send data when connected
-//  if(connected)
-  {
-    //Send a packet
-    udp.beginPacket(udpAddress,udpPort);
-    udp.printf("Seconds since boot: %lu\n", millis()/1000);
-    printf("UDP sending Seconds since boot: %d\n", (int)(millis()/1000) );
-    udp.printf("Temperature: %1.2f deg F\n", mySensor.readTempF());
-    udp.printf("Pressure: %1.2f inHg\n", mySensor.readFloatPressure() / 3386.39);
-    udp.printf("Humidity: %1.2f\n", mySensor.readFloatHumidity());
-    udp.printf("Voltage: %1.2f Vdc\n", lipo.getVoltage());
-    udp.printf("Charge: %1.2f percent\n", lipo.getSOC());
-    udp.endPacket();
-  }
-
-  //Wait for 1 second
-  delay(1000);
-}
-
-/* END UDP */
-
-////////////////////////////////////////////////////////////////////////////////
-// setup and loop
-////////////////////////////////////////////////////////////////////////////////
-
-// the setup function runs once when you press reset or power the board
-void setup() 
-{
-  // initialize digital pin LED_BUILTIN as an output.
-  pinMode(LED_BUILTIN, OUTPUT);
-//  pinMode(5, OUTPUT);      // set the LED pin mode
-
-  Serial.begin(115200);
-  delay(100);
-  Serial.println("Connecting to ");
-  Serial.println(ssid);
-
-  setup_UDP();
-  
-  Serial.println("");
-  Serial.println("WiFi connected..!");
-  Serial.print("Got IP: ");
-  Serial.println(WiFi.localIP());
-
-  setup_bme_sensor();
-}
-
-// the loop function runs over and over again forever
-void loop() 
-{
- 
-  digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
-  delay(1000);                       // wait for a second
-  digitalWrite(LED_BUILTIN, LOW);    // turn the LED off by making the voltage LOW
-  delay(1000);                       // wait for a second
-  digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
-  delay(250);                       // wait for a second
-  digitalWrite(LED_BUILTIN, LOW);    // turn the LED off by making the voltage LOW
-  delay(250);                       // wait for a second
-  digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
-  delay(250);                       // wait for a second
-  digitalWrite(LED_BUILTIN, LOW);    // turn the LED off by making the voltage LOW
-
-  fprintf(stderr, "count = %d\n", count++);
-  delay(1000);                       // wait for a second
-
-  printf("BME Sensor Ready\n");
-  print_sensor_data();
-  print_battery_data();
-
-  send_UDP();
-  
-//  go_to_sleep();
-}
