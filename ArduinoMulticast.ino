@@ -68,9 +68,9 @@ SFE_MAX1704X lipo(MAX1704X_MAX17048); // Allow access to all the 17048 features
 BME280 mySensor;
 
 // lights
-#define HOUR_SUN_RISE   6
+#define HOUR_SUN_RISE   5
 #define HOUR_SUN_SET    19
-#define IS_DAY_TIME(hour) ( (hour > HOUR_SUN_RISE) && (hour < HOUR_SUN_SET) )
+#define IS_DAY_TIME(hour) ( (hour >= HOUR_SUN_RISE) && (hour < HOUR_SUN_SET) )
 
 #define VOLTAGE_LIGHTS_OFF 3.30
 #define VOLTAGE_LOW_LIMIT 3.20
