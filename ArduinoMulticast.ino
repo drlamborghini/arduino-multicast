@@ -31,6 +31,7 @@
 #include <Wire.h>
 #include "SparkFunBME280.h"
 #include <SparkFun_MAX1704x_Fuel_Gauge_Arduino_Library.h> 
+#include <SparkFun_VEML7700_Arduino_Library.h> 
 
 // for sntp
 #include "time.h"
@@ -67,22 +68,25 @@ SFE_MAX1704X lipo(MAX1704X_MAX17048); // Allow access to all the 17048 features
 // weather measurement
 BME280 mySensor;
 
+// ambient light sensor
+VEML7700 myLightSensor; // Create a VEML7700 object
+
 // lights
 #define HOUR_SUN_RISE   5
 #define HOUR_SUN_SET    19
 #define IS_DAY_TIME(hour) ( (hour >= HOUR_SUN_RISE) && (hour < HOUR_SUN_SET) )
 
-#define VOLTAGE_LIGHTS_OFF 3.30
-#define VOLTAGE_LOW_LIMIT 3.20
+#define VOLTAGE_LIGHTS_OFF 3.20
+#define VOLTAGE_LOW_LIMIT 3.10
 
-#define uS_TO_S_FACTOR 1000000ULL   // Conversion factor for micro seconds to seconds 
+#define MICROSECONDS_PER_SECOND 1000000ULL   // Conversion factor for micro seconds to seconds 
 #define SECONDS_PER_MINUTE 60
 #define MILLISECONDS_PER_SECOND 1000
-#define TIME_TO_SLEEP_MINS 5
+#define TIME_TO_SLEEP_MINS 10
 #define TIME_TO_SLEEP_SECS (TIME_TO_SLEEP_MINS * SECONDS_PER_MINUTE)
 #define HALF_HOUR_BOOT_COUNTS (30 / TIME_TO_SLEEP_MINS)
 #define ONE_HOUR_BOOT_COUNTS (60 / TIME_TO_SLEEP_MINS)
-#define LIGHTS_OFF_BOOT_MAX HALF_HOUR_BOOT_COUNTS
+#define LIGHTS_OFF_MAX_BOOT_COUNTS HALF_HOUR_BOOT_COUNTS
 
 bool g_lightsAreOn = false;
 
@@ -173,7 +177,7 @@ void print_sensor_data()
 // a timer to wake it up and how to store data in
 // RTC memory to use it over reboots
 
-// Method to print the reason by which ESP32 has been awaken from sleep
+// Method to print the reason by which ESP32 has beLIGHTS_OFF_MAX_BOOT_COUNTSen awaken from sleep
 void print_wakeup_reason()
 {
     esp_sleep_wakeup_cause_t wakeup_reason;
@@ -203,7 +207,7 @@ void wakeup_timer_setup()
     //  First we configure the wake up source
     //  We set our ESP32 to wake up every 5 seconds
 
-    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP_SECS * uS_TO_S_FACTOR);
+    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP_SECS * MICROSECONDS_PER_SECOND);
     Serial.println("Setup ESP32 to sleep for every " + String(TIME_TO_SLEEP_SECS) + " Seconds");
 
     // By default, ESP32 will automatically power down the peripherals
@@ -226,7 +230,7 @@ void go_to_light_sleep()
     // sleep was started, it will sleep forever unless hardware
     // reset occurs.
 
-    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP_SECS * uS_TO_S_FACTOR);
+    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP_SECS * MICROSECONDS_PER_SECOND);
     Serial.println("Going to light sleep for " + String(TIME_TO_SLEEP_SECS) + " Seconds");
     Serial.flush(); 
 
@@ -243,7 +247,7 @@ void go_to_deep_sleep(int timeToSleepMins)
     // reset occurs.
     
     int timeToSleepSecs = timeToSleepMins * SECONDS_PER_MINUTE;
-    esp_sleep_enable_timer_wakeup(timeToSleepSecs * uS_TO_S_FACTOR);
+    esp_sleep_enable_timer_wakeup(timeToSleepSecs * MICROSECONDS_PER_SECOND);
     Serial.println("Going to deep sleep for " + String(TIME_TO_SLEEP_SECS) + " Seconds");
     Serial.flush(); 
 
@@ -302,6 +306,8 @@ void send_UDP()
     udp.printf("%1.2f\t", lipo.getVoltage());
     udp.printf("%1.2f\t", lipo.getSOC());
     udp.printf("%1.2f\t", lipo.getChangeRate());
+    udp.printf("%1.2f lux\t", myLightSensor.getLux() );
+ 
     udp.endPacket();
 }
 
@@ -363,6 +369,8 @@ void setup_SNTP()
     //configTzTime(time_zone, ntpServer1, ntpServer2);
 }
 
+
+
 //
 // Setup the BME280 and Wifi connections
 //
@@ -421,6 +429,7 @@ void setup()
     }
 #endif
 
+
     setup_SNTP();
 
 
@@ -429,6 +438,11 @@ void setup()
  
     // ready the BME280
     setup_bme_sensor();
+
+    if (myLightSensor.begin() == false)
+    {
+        printf("Unable to communicate with the VEML7700. Please check the wiring. Freezing...\n");
+    }
 }
 
 
@@ -518,7 +532,7 @@ void loop()
             batteryVoltageVdc = lipo.getVoltage();
             if(batteryVoltageVdc < VOLTAGE_LIGHTS_OFF)
             {
-                if(++bootCount > LIGHTS_OFF_BOOT_MAX)     // filter out edge noise with multiple samples
+                if(++bootCount > LIGHTS_OFF_MAX_BOOT_COUNTS)     // filter out edge noise with multiple samples
                 {
                     digitalWrite(LED_BUILTIN, LOW);    //turn the LED off
                     neopixelWrite(RGB_BUILTIN,RGB_BRIGHTNESS,0,0); // Red
@@ -566,7 +580,7 @@ void loop()
         printf("Connection retries exceeded [%d], Lights OFF, deep sleep\n", g_connectCount);
         g_lightsAreOn = false;
         bootCount = 0;
-        go_to_deep_sleep(TIME_TO_SLEEP_MINS);
+        go_to_light_sleep();
     } 
 
 #if 0 //experimental
